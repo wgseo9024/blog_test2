@@ -1,0 +1,1094 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>뉴스 기반 네이버 블로그 자동화</title>
+  <style>
+    :root {
+      --bg: #f4f7fb;
+      --card: #ffffff;
+      --text: #182230;
+      --muted: #6b7280;
+      --line: #dfe5ec;
+      --primary: #03c75a;
+      --primary-dark: #00a94f;
+      --blue: #2563eb;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --shadow: 0 12px 30px rgba(28, 39, 49, 0.08);
+      --radius: 18px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    button, input, select, textarea {
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    .app {
+      min-height: 100vh;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 18px 28px;
+      background: rgba(255, 255, 255, 0.94);
+      border-bottom: 1px solid var(--line);
+      backdrop-filter: blur(14px);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-logo {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      border-radius: 14px;
+      background: linear-gradient(135deg, var(--primary), #00e76f);
+      color: white;
+      font-weight: 900;
+      font-size: 22px;
+      box-shadow: 0 8px 20px rgba(3, 199, 90, 0.25);
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 20px;
+    }
+
+    .brand p {
+      margin: 3px 0 0;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .top-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      border: 0;
+      border-radius: 12px;
+      padding: 11px 16px;
+      font-weight: 700;
+      transition: 0.2s ease;
+    }
+
+    .btn:hover {
+      transform: translateY(-1px);
+    }
+
+    .btn-primary {
+      background: var(--primary);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: var(--primary-dark);
+    }
+
+    .btn-outline {
+      background: white;
+      color: var(--text);
+      border: 1px solid var(--line);
+    }
+
+    .btn-blue {
+      background: var(--blue);
+      color: white;
+    }
+
+    .btn-danger {
+      background: #fff1f2;
+      color: var(--danger);
+      border: 1px solid #fecdd3;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 330px minmax(0, 1fr);
+      gap: 22px;
+      padding: 22px;
+      max-width: 1600px;
+      margin: 0 auto;
+    }
+
+    .sidebar,
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .sidebar {
+      padding: 20px;
+      align-self: start;
+      position: sticky;
+      top: 98px;
+    }
+
+    .section-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+
+    .section-title h2,
+    .section-title h3 {
+      margin: 0;
+    }
+
+    .section-title h2 {
+      font-size: 18px;
+    }
+
+    .section-title h3 {
+      font-size: 16px;
+    }
+
+    .field {
+      margin-bottom: 15px;
+    }
+
+    .field label {
+      display: block;
+      font-size: 13px;
+      font-weight: 800;
+      margin-bottom: 7px;
+    }
+
+    .field input,
+    .field select,
+    .field textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px 13px;
+      background: #fbfcfe;
+      color: var(--text);
+      outline: none;
+    }
+
+    .field textarea {
+      min-height: 86px;
+      resize: vertical;
+    }
+
+    .field input:focus,
+    .field select:focus,
+    .field textarea:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(3, 199, 90, 0.1);
+    }
+
+    .switch-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 0;
+      border-top: 1px solid #edf0f4;
+    }
+
+    .switch-row:first-of-type {
+      border-top: 0;
+    }
+
+    .switch {
+      width: 46px;
+      height: 26px;
+      border-radius: 999px;
+      background: #ccd4de;
+      padding: 3px;
+      transition: 0.2s ease;
+    }
+
+    .switch span {
+      display: block;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: white;
+      transition: 0.2s ease;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.16);
+    }
+
+    .switch.active {
+      background: var(--primary);
+    }
+
+    .switch.active span {
+      transform: translateX(20px);
+    }
+
+    .main {
+      min-width: 0;
+    }
+
+    .progress-card {
+      padding: 18px 20px;
+      margin-bottom: 22px;
+    }
+
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 10px;
+    }
+
+    .step {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px;
+      background: #fafbfd;
+      min-height: 80px;
+    }
+
+    .step strong {
+      display: block;
+      font-size: 13px;
+      margin-bottom: 7px;
+    }
+
+    .step span {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    .step.active {
+      border-color: rgba(3,199,90,0.45);
+      background: rgba(3,199,90,0.07);
+    }
+
+    .step.done strong::before {
+      content: "✓ ";
+      color: var(--primary);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1.05fr 1.5fr 0.9fr;
+      gap: 18px;
+      align-items: start;
+    }
+
+    .card {
+      padding: 18px;
+      min-width: 0;
+    }
+
+    .news-list {
+      display: grid;
+      gap: 12px;
+      max-height: 720px;
+      overflow: auto;
+      padding-right: 4px;
+    }
+
+    .news-item {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px;
+      background: #fbfcfe;
+      transition: 0.2s ease;
+    }
+
+    .news-item:hover {
+      border-color: #b9c4d1;
+      transform: translateY(-1px);
+    }
+
+    .news-meta {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 5px 9px;
+      background: #eef2ff;
+      color: #4f46e5;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .badge.green {
+      background: #eafbf1;
+      color: #07883e;
+    }
+
+    .badge.orange {
+      background: #fff7e6;
+      color: #b46900;
+    }
+
+    .news-item h4 {
+      margin: 0 0 8px;
+      font-size: 15px;
+      line-height: 1.45;
+    }
+
+    .news-item p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .news-actions {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .mini-btn {
+      border: 1px solid var(--line);
+      background: white;
+      border-radius: 9px;
+      padding: 8px 10px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .editor-card textarea {
+      width: 100%;
+      min-height: 520px;
+      border: 0;
+      resize: vertical;
+      outline: none;
+      font-size: 15px;
+      line-height: 1.8;
+      color: #25313e;
+      background: transparent;
+    }
+
+    .editor-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 10px 0 14px;
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 14px;
+    }
+
+    .toolbar-btn {
+      border: 1px solid var(--line);
+      background: #fafbfd;
+      border-radius: 9px;
+      padding: 8px 10px;
+      font-weight: 800;
+      font-size: 12px;
+    }
+
+    .title-input {
+      width: 100%;
+      border: 0;
+      border-bottom: 1px solid var(--line);
+      padding: 6px 0 14px;
+      margin-bottom: 12px;
+      font-weight: 900;
+      font-size: 24px;
+      outline: none;
+    }
+
+    .tag-area {
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid var(--line);
+    }
+
+    .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .tag {
+      padding: 7px 10px;
+      border-radius: 999px;
+      background: #eff6ff;
+      color: #1d4ed8;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .image-grid {
+      display: grid;
+      gap: 12px;
+    }
+
+    .image-card {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      overflow: hidden;
+      background: #fbfcfe;
+    }
+
+    .image-placeholder {
+      aspect-ratio: 16 / 9;
+      display: grid;
+      place-items: center;
+      background:
+        linear-gradient(135deg, rgba(37,99,235,0.12), rgba(3,199,90,0.12)),
+        repeating-linear-gradient(45deg, #f7f9fc 0 12px, #eef2f6 12px 24px);
+      color: #506070;
+      font-weight: 800;
+      font-size: 13px;
+      text-align: center;
+      padding: 14px;
+    }
+
+    .image-info {
+      padding: 12px;
+    }
+
+    .image-info strong {
+      display: block;
+      font-size: 13px;
+      margin-bottom: 6px;
+    }
+
+    .image-info p {
+      margin: 0;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    .license {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 10px;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .license.ok { color: #07883e; }
+    .license.check { color: #b46900; }
+    .license.no { color: var(--danger); }
+
+    .bottom-panel {
+      margin-top: 18px;
+      display: grid;
+      grid-template-columns: 1.2fr 1fr;
+      gap: 18px;
+    }
+
+    .summary-box {
+      background: #f8fafc;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px;
+      font-size: 13px;
+      line-height: 1.65;
+      color: #435160;
+    }
+
+    .download-actions {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .status {
+      margin-top: 14px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: #eefbf4;
+      color: #087d3b;
+      font-size: 13px;
+      font-weight: 700;
+      display: none;
+    }
+
+    @media (max-width: 1180px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        position: static;
+      }
+
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .steps {
+        grid-template-columns: repeat(3, 1fr);
+      }
+    }
+
+    @media (max-width: 700px) {
+      .topbar {
+        align-items: flex-start;
+        padding: 15px;
+      }
+
+      .brand p {
+        display: none;
+      }
+
+      .layout {
+        padding: 12px;
+      }
+
+      .steps {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .bottom-panel {
+        grid-template-columns: 1fr;
+      }
+
+      .top-actions {
+        display: none;
+      }
+
+      .download-actions {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-logo">N</div>
+        <div>
+          <h1>뉴스 기반 블로그 자동화</h1>
+          <p>뉴스 감지부터 네이버 블로그 발행 준비까지 한 화면에서 관리하세요.</p>
+        </div>
+      </div>
+
+      <div class="top-actions">
+        <button class="btn btn-outline" id="saveBtn">임시 저장</button>
+        <button class="btn btn-blue" id="previewBtn">미리보기</button>
+        <button class="btn btn-primary" id="copyAllBtn">전체 복사</button>
+      </div>
+    </header>
+
+    <div class="layout">
+      <aside class="sidebar">
+        <div class="section-title">
+          <h2>자동화 설정</h2>
+          <span class="badge green">실행 준비</span>
+        </div>
+
+        <div class="field">
+          <label for="keyword">수집 키워드</label>
+          <input id="keyword" type="text" value="AI 반도체 뉴스" placeholder="예: 전기차 보조금" />
+        </div>
+
+        <div class="field">
+          <label for="category">카테고리</label>
+          <select id="category">
+            <option>IT·테크</option>
+            <option>경제</option>
+            <option>자동차</option>
+            <option>연예</option>
+            <option>건강</option>
+            <option>생활정보</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="source">뉴스 수집 소스</label>
+          <select id="source">
+            <option>네이버 뉴스 검색 API</option>
+            <option>RSS 피드</option>
+            <option>등록한 뉴스 사이트</option>
+            <option>전체 소스</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="interval">뉴스 감지 주기</label>
+          <select id="interval">
+            <option>10분마다</option>
+            <option>30분마다</option>
+            <option>1시간마다</option>
+            <option>3시간마다</option>
+            <option>하루 1회</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="articleCount">비교 기사 수</label>
+          <input id="articleCount" type="number" min="2" max="20" value="5" />
+        </div>
+
+        <div class="field">
+          <label for="tone">글 작성 스타일</label>
+          <select id="tone">
+            <option>네이버 블로그 정보형</option>
+            <option>친근한 개인 블로거형</option>
+            <option>전문가 해설형</option>
+            <option>이슈 요약형</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="prompt">추가 작성 지침</label>
+          <textarea id="prompt">도입부 + 핵심 내용 3개 + 결론 구성으로 작성하고, 과장 표현 없이 사실 중심으로 작성해 주세요.</textarea>
+        </div>
+
+        <div class="switch-row">
+          <div>
+            <strong>중복 기사 제거</strong>
+            <div style="font-size:12px;color:var(--muted);margin-top:3px;">유사 제목과 동일 URL 제외</div>
+          </div>
+          <button class="switch active" type="button"><span></span></button>
+        </div>
+
+        <div class="switch-row">
+          <div>
+            <strong>이미지 사용권 확인</strong>
+            <div style="font-size:12px;color:var(--muted);margin-top:3px;">권리 상태 자동 분류</div>
+          </div>
+          <button class="switch active" type="button"><span></span></button>
+        </div>
+
+        <div class="switch-row">
+          <div>
+            <strong>AI 대체 이미지</strong>
+            <div style="font-size:12px;color:var(--muted);margin-top:3px;">사용 불가 이미지 대체</div>
+          </div>
+          <button class="switch active" type="button"><span></span></button>
+        </div>
+
+        <button class="btn btn-primary" id="runBtn" style="width:100%;margin-top:18px;">
+          자동화 실행
+        </button>
+
+        <div class="status" id="statusBox">뉴스 수집과 초안 생성이 시작되었습니다.</div>
+      </aside>
+
+      <main class="main">
+        <section class="card progress-card">
+          <div class="section-title">
+            <h2>작업 진행 상태</h2>
+            <span class="badge">프로토타입 화면</span>
+          </div>
+
+          <div class="steps">
+            <div class="step done active">
+              <strong>뉴스 감지</strong>
+              <span>새 기사 12건 발견</span>
+            </div>
+            <div class="step done active">
+              <strong>핵심 추출</strong>
+              <span>주요 사실과 인물 분류</span>
+            </div>
+            <div class="step done active">
+              <strong>중복 제거</strong>
+              <span>유사 기사 7건 제외</span>
+            </div>
+            <div class="step active">
+              <strong>AI 초안</strong>
+              <span>본문과 제목 생성 완료</span>
+            </div>
+            <div class="step">
+              <strong>이미지 검토</strong>
+              <span>사용권 상태 확인 필요</span>
+            </div>
+            <div class="step">
+              <strong>발행 준비</strong>
+              <span>복사 및 다운로드 대기</span>
+            </div>
+          </div>
+        </section>
+
+        <div class="grid">
+          <section class="card">
+            <div class="section-title">
+              <h3>수집된 뉴스</h3>
+              <span class="badge">5건 선택</span>
+            </div>
+
+            <div class="news-list">
+              <article class="news-item">
+                <div class="news-meta">
+                  <span class="badge green">선택됨</span>
+                  <span>테크데일리</span>
+                  <span>2026.07.10 14:30</span>
+                </div>
+                <h4>국내 AI 반도체 투자 확대, 주요 기업들의 전략 변화</h4>
+                <p>정부 지원과 기업 투자 계획을 중심으로 AI 반도체 시장의 최근 움직임을 정리한 기사입니다.</p>
+                <div class="news-actions">
+                  <button class="mini-btn">원문 보기</button>
+                  <button class="mini-btn">핵심 내용</button>
+                </div>
+              </article>
+
+              <article class="news-item">
+                <div class="news-meta">
+                  <span class="badge green">선택됨</span>
+                  <span>비즈뉴스</span>
+                  <span>2026.07.10 13:05</span>
+                </div>
+                <h4>AI 서버 수요 증가로 반도체 공급망 다시 주목</h4>
+                <p>고성능 메모리와 데이터센터 수요가 늘면서 관련 공급망이 확대되는 흐름을 소개합니다.</p>
+                <div class="news-actions">
+                  <button class="mini-btn">원문 보기</button>
+                  <button class="mini-btn">핵심 내용</button>
+                </div>
+              </article>
+
+              <article class="news-item">
+                <div class="news-meta">
+                  <span class="badge orange">유사 기사</span>
+                  <span>경제포커스</span>
+                  <span>2026.07.10 11:40</span>
+                </div>
+                <h4>반도체 업계, AI 중심 투자 경쟁 본격화</h4>
+                <p>선택된 기사와 유사도가 높아 중복 후보로 분류되었습니다.</p>
+                <div class="news-actions">
+                  <button class="mini-btn">포함하기</button>
+                  <button class="mini-btn">제외 유지</button>
+                </div>
+              </article>
+
+              <article class="news-item">
+                <div class="news-meta">
+                  <span class="badge green">선택됨</span>
+                  <span>디지털인사이트</span>
+                  <span>2026.07.10 09:20</span>
+                </div>
+                <h4>AI 반도체 시장에서 주목받는 핵심 기술 3가지</h4>
+                <p>HBM, NPU, 첨단 패키징을 중심으로 시장의 기술 경쟁 구도를 설명합니다.</p>
+                <div class="news-actions">
+                  <button class="mini-btn">원문 보기</button>
+                  <button class="mini-btn">핵심 내용</button>
+                </div>
+              </article>
+            </div>
+          </section>
+
+          <section class="card editor-card">
+            <div class="section-title">
+              <h3>AI 블로그 초안</h3>
+              <span class="badge green">자동 저장됨</span>
+            </div>
+
+            <input class="title-input" id="blogTitle" value="AI 반도체 시장, 지금 주목해야 할 변화 3가지" />
+
+            <div class="editor-toolbar">
+              <button class="toolbar-btn" data-action="bold">굵게</button>
+              <button class="toolbar-btn" data-action="subtitle">소제목</button>
+              <button class="toolbar-btn" data-action="shorten">문장 줄이기</button>
+              <button class="toolbar-btn" data-action="rewrite">다시 쓰기</button>
+              <button class="toolbar-btn" data-action="fact">사실 확인</button>
+            </div>
+
+            <textarea id="blogContent">최근 AI 반도체 시장이 다시 빠르게 움직이고 있습니다. 단순히 반도체 수요가 늘어나는 수준을 넘어, 기업들의 투자 방향과 기술 경쟁의 중심도 달라지고 있습니다.
+
+1. AI 서버 수요가 시장을 움직이고 있습니다
+
+생성형 AI 서비스가 확대되면서 데이터센터와 AI 서버에 필요한 고성능 반도체 수요가 커지고 있습니다. 특히 빠른 데이터 처리를 지원하는 고대역폭 메모리와 AI 연산 전용 반도체가 시장의 핵심으로 떠오르고 있습니다.
+
+2. 기업들의 투자 방식이 달라지고 있습니다
+
+반도체 기업들은 생산량 확대뿐 아니라 첨단 패키징, 전력 효율, AI 전용 설계 기술에도 투자를 늘리고 있습니다. 단순한 성능 경쟁보다 실제 서비스 환경에서 얼마나 효율적으로 사용할 수 있는지가 중요해지고 있습니다.
+
+3. 공급망 전체를 함께 봐야 합니다
+
+AI 반도체 시장의 성장은 칩 제조사만의 이야기가 아닙니다. 소재, 장비, 패키징, 서버, 냉각 시스템까지 연결된 산업 전반에 영향을 줄 수 있습니다. 따라서 관련 뉴스를 볼 때는 특정 기업 한 곳보다 전체 공급망의 변화를 함께 살펴보는 것이 좋습니다.
+
+앞으로 AI 반도체 시장은 기술 개발 속도와 실제 수요가 함께 움직이는지가 중요한 기준이 될 것으로 보입니다. 관련 투자를 검토하거나 업계 흐름을 살펴볼 때는 공식 발표와 여러 매체의 보도를 함께 확인하는 것이 필요합니다.</textarea>
+
+            <div class="tag-area">
+              <div class="section-title" style="margin-bottom:10px;">
+                <h3>자동 생성 태그</h3>
+                <button class="mini-btn" id="copyTagsBtn">태그 복사</button>
+              </div>
+
+              <div class="tags" id="tags">
+                <span class="tag">#AI반도체</span>
+                <span class="tag">#반도체시장</span>
+                <span class="tag">#HBM</span>
+                <span class="tag">#NPU</span>
+                <span class="tag">#데이터센터</span>
+                <span class="tag">#첨단패키징</span>
+                <span class="tag">#IT뉴스</span>
+                <span class="tag">#테크트렌드</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="section-title">
+              <h3>이미지 후보</h3>
+              <button class="mini-btn">AI 이미지 생성</button>
+            </div>
+
+            <div class="image-grid">
+              <article class="image-card">
+                <div class="image-placeholder">기사 대표 이미지 미리보기</div>
+                <div class="image-info">
+                  <strong>AI 반도체 생산 시설</strong>
+                  <p>원문 기사에서 수집된 이미지 후보입니다.</p>
+                  <div class="license check">● 사용권 검토 필요</div>
+                </div>
+              </article>
+
+              <article class="image-card">
+                <div class="image-placeholder">대체 이미지 생성 프롬프트</div>
+                <div class="image-info">
+                  <strong>AI 데이터센터 실사형 이미지</strong>
+                  <p>특정 기업 로고 없이 서버와 반도체를 표현한 대체 이미지입니다.</p>
+                  <div class="license ok">● AI 생성 이미지 사용 가능</div>
+                </div>
+              </article>
+
+              <article class="image-card">
+                <div class="image-placeholder">무료 이미지 API 후보</div>
+                <div class="image-info">
+                  <strong>반도체 웨이퍼 클로즈업</strong>
+                  <p>상업적 이용 조건과 출처 표시 여부를 확인하세요.</p>
+                  <div class="license check">● 라이선스 조건 확인</div>
+                </div>
+              </article>
+            </div>
+          </section>
+        </div>
+
+        <div class="bottom-panel">
+          <section class="card">
+            <div class="section-title">
+              <h3>교차 비교 요약</h3>
+              <span class="badge green">5개 기사 분석</span>
+            </div>
+
+            <div class="summary-box">
+              <strong>공통 확인 내용</strong><br />
+              AI 서버 수요 증가, 고성능 메모리 투자 확대, 첨단 패키징 중요성 증가가 여러 기사에서 공통적으로 확인되었습니다.<br /><br />
+              <strong>추가 확인 필요</strong><br />
+              개별 기업의 투자 금액과 일정은 기사마다 차이가 있어 공식 발표 자료 확인이 필요합니다.
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="section-title">
+              <h3>발행 준비</h3>
+              <span class="badge orange">직접 발행</span>
+            </div>
+
+            <div class="download-actions">
+              <button class="btn btn-outline" id="copyBodyBtn">본문 복사</button>
+              <button class="btn btn-outline" id="downloadTxtBtn">TXT 다운로드</button>
+              <button class="btn btn-outline" id="downloadHtmlBtn">HTML 다운로드</button>
+              <button class="btn btn-primary" id="openNaverBtn">네이버 블로그 열기</button>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script>
+    const switches = document.querySelectorAll(".switch");
+    switches.forEach((button) => {
+      button.addEventListener("click", () => {
+        button.classList.toggle("active");
+      });
+    });
+
+    const showStatus = (message) => {
+      const statusBox = document.getElementById("statusBox");
+      statusBox.textContent = message;
+      statusBox.style.display = "block";
+      setTimeout(() => {
+        statusBox.style.display = "none";
+      }, 3000);
+    };
+
+    const getArticleText = () => {
+      const title = document.getElementById("blogTitle").value.trim();
+      const content = document.getElementById("blogContent").value.trim();
+      const tags = [...document.querySelectorAll(".tag")].map(tag => tag.textContent).join(" ");
+      return `${title}\n\n${content}\n\n${tags}`;
+    };
+
+    document.getElementById("runBtn").addEventListener("click", () => {
+      showStatus("뉴스 수집과 AI 초안 생성을 시작했습니다. 백엔드 API 연결 후 실제 데이터로 작동합니다.");
+    });
+
+    document.getElementById("saveBtn").addEventListener("click", () => {
+      localStorage.setItem("blogTitle", document.getElementById("blogTitle").value);
+      localStorage.setItem("blogContent", document.getElementById("blogContent").value);
+      showStatus("현재 초안이 브라우저에 임시 저장되었습니다.");
+    });
+
+    document.getElementById("copyAllBtn").addEventListener("click", async () => {
+      await navigator.clipboard.writeText(getArticleText());
+      showStatus("제목, 본문, 태그를 모두 복사했습니다.");
+    });
+
+    document.getElementById("copyBodyBtn").addEventListener("click", async () => {
+      await navigator.clipboard.writeText(document.getElementById("blogContent").value);
+      showStatus("본문을 복사했습니다.");
+    });
+
+    document.getElementById("copyTagsBtn").addEventListener("click", async () => {
+      const tags = [...document.querySelectorAll(".tag")].map(tag => tag.textContent).join(" ");
+      await navigator.clipboard.writeText(tags);
+      showStatus("태그를 복사했습니다.");
+    });
+
+    document.getElementById("downloadTxtBtn").addEventListener("click", () => {
+      downloadFile("blog-draft.txt", getArticleText(), "text/plain");
+    });
+
+    document.getElementById("downloadHtmlBtn").addEventListener("click", () => {
+      const title = document.getElementById("blogTitle").value;
+      const content = document.getElementById("blogContent").value
+        .split("\n")
+        .map(line => line.trim() ? `<p>${escapeHtml(line)}</p>` : "<br>")
+        .join("\n");
+      const tags = [...document.querySelectorAll(".tag")].map(tag => tag.textContent).join(" ");
+
+      const html = `<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>${escapeHtml(title)}</title>
+</head>
+<body>
+<h1>${escapeHtml(title)}</h1>
+${content}
+<p>${escapeHtml(tags)}</p>
+</body>
+</html>`;
+
+      downloadFile("blog-draft.html", html, "text/html");
+    });
+
+    document.getElementById("openNaverBtn").addEventListener("click", () => {
+      window.open("https://blog.naver.com/", "_blank");
+    });
+
+    document.getElementById("previewBtn").addEventListener("click", () => {
+      const preview = window.open("", "_blank");
+      const title = document.getElementById("blogTitle").value;
+      const content = document.getElementById("blogContent").value
+        .split("\n")
+        .map(line => line.trim() ? `<p>${escapeHtml(line)}</p>` : "<br>")
+        .join("");
+
+      preview.document.write(`
+        <!DOCTYPE html>
+        <html lang="ko">
+        <head>
+          <meta charset="UTF-8">
+          <title>블로그 미리보기</title>
+          <style>
+            body {
+              max-width: 760px;
+              margin: 50px auto;
+              padding: 0 22px;
+              font-family: Arial, sans-serif;
+              line-height: 1.9;
+              color: #222;
+            }
+            h1 { line-height: 1.35; }
+            p { margin: 0 0 18px; }
+          </style>
+        </head>
+        <body>
+          <h1>${escapeHtml(title)}</h1>
+          ${content}
+        </body>
+        </html>
+      `);
+      preview.document.close();
+    });
+
+    document.querySelectorAll(".toolbar-btn").forEach(button => {
+      button.addEventListener("click", () => {
+        const action = button.dataset.action;
+        const content = document.getElementById("blogContent");
+        const start = content.selectionStart;
+        const end = content.selectionEnd;
+        const selected = content.value.substring(start, end);
+
+        if (action === "bold" && selected) {
+          content.setRangeText(`**${selected}**`, start, end, "end");
+        } else if (action === "subtitle" && selected) {
+          content.setRangeText(`\n## ${selected}\n`, start, end, "end");
+        } else {
+          showStatus(`${button.textContent} 기능은 백엔드 AI API 연결 후 작동합니다.`);
+        }
+      });
+    });
+
+    const downloadFile = (filename, content, type) => {
+      const blob = new Blob([content], { type: `${type};charset=utf-8` });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      showStatus(`${filename} 파일을 다운로드했습니다.`);
+    };
+
+    const escapeHtml = (value) => {
+      return value
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    };
+
+    window.addEventListener("DOMContentLoaded", () => {
+      const savedTitle = localStorage.getItem("blogTitle");
+      const savedContent = localStorage.getItem("blogContent");
+
+      if (savedTitle) document.getElementById("blogTitle").value = savedTitle;
+      if (savedContent) document.getElementById("blogContent").value = savedContent;
+    });
+  </script>
+</body>
+</html>
