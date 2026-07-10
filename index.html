@@ -950,8 +950,57 @@ AI 반도체 시장의 성장은 칩 제조사만의 이야기가 아닙니다. 
       return `${title}\n\n${content}\n\n${tags}`;
     };
 
-    document.getElementById("runBtn").addEventListener("click", () => {
-      showStatus("뉴스 수집과 AI 초안 생성을 시작했습니다. 백엔드 API 연결 후 실제 데이터로 작동합니다.");
+    const renderTags = (tags) => {
+      const tagsBox = document.getElementById("tags");
+      tagsBox.replaceChildren(...tags.map((tag) => {
+        const span = document.createElement("span");
+        span.className = "tag";
+        span.textContent = `#${tag.replace(/^#/, "")}`;
+        return span;
+      }));
+    };
+
+    document.getElementById("runBtn").addEventListener("click", async () => {
+      const button = document.getElementById("runBtn");
+      const keyword = document.getElementById("keyword").value.trim();
+
+      if (!keyword) {
+        showStatus("수집 키워드를 입력해 주세요.");
+        return;
+      }
+
+      button.disabled = true;
+      button.textContent = "AI가 글을 작성하는 중...";
+      showStatus("최신 자료를 검색하고 블로그 초안을 작성하고 있습니다.");
+
+      try {
+        const response = await fetch("/api/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            keyword,
+            category: document.getElementById("category").value,
+            articleCount: document.getElementById("articleCount").value,
+            tone: document.getElementById("tone").value,
+            prompt: document.getElementById("prompt").value,
+          }),
+        });
+
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "글 생성에 실패했습니다.");
+
+        document.getElementById("blogTitle").value = result.title;
+        document.getElementById("blogContent").value = result.content;
+        renderTags(result.tags);
+        localStorage.setItem("blogTitle", result.title);
+        localStorage.setItem("blogContent", result.content);
+        showStatus("AI 블로그 초안 생성이 완료되었습니다.");
+      } catch (error) {
+        showStatus(error.message || "요청 중 오류가 발생했습니다.");
+      } finally {
+        button.disabled = false;
+        button.textContent = "자동화 실행";
+      }
     });
 
     document.getElementById("saveBtn").addEventListener("click", () => {
