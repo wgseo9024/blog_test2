@@ -5,7 +5,7 @@ export function validateWriterOutput(value) {
   const issues = [];
   const blocks = Array.isArray(value?.bodyBlocks) ? value.bodyBlocks.map((v) => String(v).trim()) : [];
   const tags = normalizeTags(value?.tags);
-  if (blocks.length !== 6) issues.push({ code: "BODY_BLOCK_COUNT", message: "bodyBlocks는 정확히 6개여야 합니다." });
+  if (blocks.length !== 7) issues.push({ code: "BODY_BLOCK_COUNT", message: "bodyBlocks는 정확히 7개여야 합니다." });
   if (blocks.some((block) => !block || /\n/.test(block))) issues.push({ code: "BODY_BLOCK_SENTENCE", message: "각 block은 줄바꿈 없는 완결 문장이어야 합니다." });
   const length = blocks.join("").length;
   if (length < 700 || length > 800) issues.push({ code: "BODY_LENGTH", message: `본문은 700~800자여야 합니다(현재 ${length}자).` });
@@ -16,7 +16,7 @@ export function validateWriterOutput(value) {
 
 export function renderDraft(bodyBlocks, tags, imageUrls = []) {
   const lines = [];
-  for (let i = 0; i < 6; i += 1) {
+  for (let i = 0; i < 7; i += 1) {
     if (i < 4 && imageUrls[i]) lines.push(imageUrls[i]);
     lines.push(bodyBlocks[i] || "", "");
   }

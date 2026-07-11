@@ -14,7 +14,7 @@ const schemas = {
     conflicts: { type: "array", items: { $ref: "#/$defs/fact" } }, excludedClaims: { type: "array", items: { $ref: "#/$defs/fact" } },
   }, required: ["commonFacts", "singleSourceFacts", "conflicts", "excludedClaims"], additionalProperties: false,
   $defs: { fact: { type: "object", properties: { text: { type: "string" }, sourceArticleIds: { type: "array", items: { type: "integer" } } }, required: ["text", "sourceArticleIds"], additionalProperties: false } } },
-  writer: { type: "object", properties: { title: { type: "string" }, bodyBlocks: { type: "array", items: { type: "string" }, minItems: 6, maxItems: 6 }, tags: { type: "array", items: { type: "string" }, minItems: 10, maxItems: 10 } }, required: ["title", "bodyBlocks", "tags"], additionalProperties: false },
+  writer: { type: "object", properties: { title: { type: "string" }, bodyBlocks: { type: "array", items: { type: "string" }, minItems: 7, maxItems: 7 }, tags: { type: "array", items: { type: "string" }, minItems: 10, maxItems: 10 } }, required: ["title", "bodyBlocks", "tags"], additionalProperties: false },
   validator: { type: "object", properties: { valid: { type: "boolean" }, issues: { type: "array", items: { type: "object", properties: { sentence: { type: "string" }, reason: { type: "string" } }, required: ["sentence", "reason"], additionalProperties: false } } }, required: ["valid", "issues"], additionalProperties: false },
 };
 
@@ -26,8 +26,8 @@ export async function response(env, name, instructions, payload, schema) {
 }
 
 export const FACT_PROMPT = "기사 1~3개만 근거로 공통 사실, 단일 출처 사실, 충돌, 제외할 추측을 분리하고 모든 항목에 sourceArticleIds를 붙여라.";
-export const WRITER_PROMPT = "Fact와 기사에서 확인된 사실만 사용한다. title, 정확히 6개의 완결된 한 문장 bodyBlocks, 정확히 10개의 중복 없는 # 없는 tags를 출력한다. 6문장 합계는 공백 포함 700~800자다. 소제목, 없는 반응·과거 정보, 장문 복제, 논란 단정을 금지한다.";
-export const VALIDATOR_PROMPT = "기사와 Fact에 없는 인물·사건·반응, 반대 설명, 과장 제목, 비난·단정, 원문 과도 복제, 6 blocks, 10 tags, 본문 700~800자를 엄격히 검사하라.";
+export const WRITER_PROMPT = "Fact와 기사에서 확인된 사실만 사용한다. title, 정확히 7개의 완결된 한 문장 bodyBlocks, 정확히 10개의 중복 없는 # 없는 tags를 출력한다. 7문장 합계는 공백 포함 700~800자다. 소제목, 없는 반응·과거 정보, 장문 복제, 논란 단정을 금지한다.";
+export const VALIDATOR_PROMPT = "기사와 Fact에 없는 인물·사건·반응, 반대 설명, 과장 제목, 비난·단정, 원문 과도 복제, 7 blocks, 10 tags, 본문 700~800자를 엄격히 검사하라.";
 export { schemas };
 
 export async function generateGroupDraft(env, rawId, options = {}) {

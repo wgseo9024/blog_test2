@@ -203,7 +203,7 @@ try {
     const editor = await inspectEditor(page);
     const prepared=await prepareImages(draft);
     await editor.title.locator.fill(draft.title);
-    const bodyBlocks = Array.isArray(draft.bodyBlocks) && draft.bodyBlocks.length === 6 ? draft.bodyBlocks : [draft.content];
+    const bodyBlocks = Array.isArray(draft.bodyBlocks) && draft.bodyBlocks.length === 7 ? draft.bodyBlocks : [draft.content];
     await editor.body.locator.fill("");
     for(let index=0;index<bodyBlocks.length;index++){if(index<prepared.length)await uploadImages(page,[prepared[index]]);await editor.body.locator.press("End");await editor.body.locator.pressSequentially(`${bodyBlocks[index]}\n\n`);}
     await editor.body.locator.pressSequentially((draft.tags||[]).map((tag)=>`#${tag}`).join(" "));
