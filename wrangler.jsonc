@@ -1,0 +1,13 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "blog-test2",
+  "compatibility_date": "2026-07-11",
+  "pages_build_output_dir": ".",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "blog-news-db",
+      "database_id": "885000de-6b5f-40f8-993e-75e837897a44"
+    }
+  ]
+}
