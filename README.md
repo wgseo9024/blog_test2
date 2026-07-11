@@ -3,6 +3,22 @@
 정적 화면은 `index.html`, OpenAI 호출은 `functions/api/generate.js`에서 처리합니다.
 브라우저에는 OpenAI API 키가 전달되지 않습니다.
 
+## 처음 시작하는 순서
+
+1. Node.js 20 이상을 설치합니다.
+2. 로컬 D1 migration을 적용합니다: `npx wrangler d1 migrations apply blog-news-db --local`
+3. `.dev.vars`에 필요한 로컬 secret을 넣습니다. 이 파일은 Git에 포함되지 않습니다.
+4. `npx wrangler pages dev .`로 대시보드를 엽니다.
+5. 수집 → 그룹화 → 초안 생성 → 검토 → 발행 대기 순서로 확인합니다.
+
+자동화 실행은 실제 네이버 발행을 하지 않습니다. `publish` 자동화 모드는 승인된 초안을
+`queued` 상태로 만드는 의미입니다. 실제 네이버 조작은 별도 `publisher-app`이 로컬
+Chrome에서 수행하며 기본 동작도 임시저장까지만입니다.
+
+운영과 장애 확인은 `docs/OPERATIONS.md`, 사람이 직접 해야 하는 배포·Secret·로그인 작업은
+`docs/MANUAL_STEPS.md`, 구현 기준선과 호환성 판단은 `docs/FINAL_IMPLEMENTATION_PLAN.md`를
+참고하세요.
+
 ## D1 기사 API
 
 다음 Pages Functions가 `DB` D1 binding의 `articles` 테이블을 사용합니다.
@@ -36,7 +52,10 @@
 3. 프레임워크 프리셋은 `None`, 빌드 명령은 비워 두고, 빌드 출력 디렉터리는 `/`로 설정합니다.
 4. 프로젝트의 **Settings → Variables and Secrets**에서 다음 값을 추가합니다.
    - `OPENAI_API_KEY`: OpenAI API 키. 반드시 **Secret/Encrypt**로 저장합니다.
-   - `OPENAI_MODEL`: 선택 사항. 기본값은 `gpt-5.6-sol`입니다.
+   - `OPENAI_MODEL`: 사용할 Responses API 모델 이름입니다. 그룹 초안 생성에 필수입니다.
+   - `AUTOMATION_TOKEN`: Scheduler와 동일한 긴 무작위 secret입니다.
+   - `MANUAL_AUTOMATION_TOKEN`: 대시보드 수동 실행 전용 secret입니다.
+   - `PUBLISHER_TOKEN`: 로컬 발행 도우미 전용 secret입니다.
 5. 새 배포를 실행합니다.
 
 배포 후 화면에 연예뉴스 기사 제목과 본문을 붙여 넣고 **블로그 글 작성**을 누르면
@@ -213,6 +232,21 @@ curl -X DELETE 'http://localhost:8788/api/drafts/7'
 수 있습니다. 완료된 초안은 기존 제목·본문·태그 편집기에 표시되며, **저장된 블로그
 초안** 목록에서도 다시 불러올 수 있습니다. 저장된 초안을 편집한 뒤 상단 **임시 저장**
 버튼을 누르면 제목, 본문, 태그, 상태가 D1에 반영됩니다.
+
+## 검토와 로컬 발행 대기열
+
+초안 상태는 `draft`, `review`, `queued`, `published`, `failed`만 사용합니다. 화면의
+**승인** 버튼은 검토한 초안을 queued로 바꿉니다. 아래 API는
+`Authorization: Bearer PUBLISHER_TOKEN`이 필수이며 lease는 15분 동안 한 프로그램만
+초안을 가져가게 합니다.
+
+- `GET /api/publisher/queued`: lease 가능한 대기 초안 최대 30개
+- `POST /api/publisher/lease`: `{ "draft_id": 1 }`
+- `POST /api/publisher/result`: draft_id, lease_token, result 기록
+
+RSS와 원문의 `og:image`는 다운로드하지 않고 후보 URL만 저장합니다.
+`GET /api/articles/:id/images`에서 출처와 원문 링크를 함께 확인할 수 있으며 사용 전
+권리 확인이 필요합니다.
 
 ## 자동화 대시보드 적용
 

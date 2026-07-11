@@ -41,6 +41,7 @@ const scheduleRetry = async (env, now) => {
 export default {
   async scheduled(_controller, env) {
     const now = new Date();
+    const ownerId = `scheduler:${crypto.randomUUID()}`;
     try {
       const settings = await env.DB.prepare(
         "SELECT enabled, interval_minutes, start_time, end_time, last_run_at, next_run_at FROM automation_settings WHERE id = 1",
@@ -74,15 +75,14 @@ export default {
         throw new Error(`Pages automation API failed with HTTP ${response.status}`);
       }
 
-      const interval = Number(settings.interval_minutes);
-      if (!Number.isFinite(interval) || interval <= 0) throw new Error("Invalid interval_minutes value");
-      const nextRunAt = new Date(now.getTime() + interval * 60 * 1000).toISOString();
-      await env.DB.prepare(`UPDATE automation_settings
-        SET last_run_at = ?, next_run_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1`)
-        .bind(now.toISOString(), nextRunAt).run();
+      // Pages owns last_run_at/next_run_at updates so the schedule has one source of truth.
     } catch (error) {
       console.error("Scheduled automation failed", error);
       try {
+        await env.DB.prepare(`INSERT INTO automation_run_logs
+          (owner_id, trigger_type, status, started_at, finished_at, error_message)
+          VALUES (?, 'scheduler-worker', 'failed', ?, ?, ?)`)
+          .bind(ownerId, now.toISOString(), new Date().toISOString(), String(error?.message || "Scheduler failure").slice(0, 1000)).run();
         await scheduleRetry(env, now);
       } catch (retryError) {
         console.error("Failed to schedule automation retry", retryError);

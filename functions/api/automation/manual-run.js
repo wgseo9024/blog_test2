@@ -20,7 +20,7 @@ export async function onRequestPost({ request, env }) {
   if (!tokensMatch(provided, env.MANUAL_AUTOMATION_TOKEN)) {
     return failure("수동 실행 권한이 없습니다.", 401);
   }
-  return executeAutomation({ env });
+  return executeAutomation({ env, triggerType: "manual" });
 }
 
 export function onRequest(context) {

@@ -76,15 +76,16 @@ export async function generateGroupDraft(env, rawGroupId, options = {}) {
     ).bind(groupId).first();
     if (!group) return failure("이슈 그룹을 찾을 수 없습니다.", 404, "GROUP_NOT_FOUND");
 
-    if (options.preventDuplicate) {
+    const preventDuplicate = options.preventDuplicate !== false;
+    if (preventDuplicate) {
       const existing = await env.DB.prepare(
         "SELECT id FROM drafts WHERE article_group_id = ? LIMIT 1",
       ).bind(groupId).first();
       if (existing) return failure("이미 초안이 생성된 이슈 그룹입니다.", 409, "DRAFT_EXISTS");
     }
 
-    const query = await env.DB.prepare(`SELECT a.id, a.title, a.source, a.summary, a.content,
-      a.published_at
+    const query = await env.DB.prepare(`SELECT a.id, a.title, a.url, a.source, a.summary, a.content,
+      a.extracted_content, a.extraction_status, a.published_at
       FROM article_group_items i
       JOIN articles a ON a.id = i.article_id
       WHERE i.group_id = ?
@@ -100,12 +101,23 @@ export async function generateGroupDraft(env, rawGroupId, options = {}) {
   }
 
   const selected = selectArticles(articles);
+  for (const article of selected) {
+    if (article.extracted_content) continue;
+    try {
+      const extracted = await extractAndStore(env, article);
+      article.extracted_content = extracted.text;
+      article.extraction_status = extracted.status;
+    } catch (error) {
+      console.error("Article extraction storage failed", article.id, error);
+    }
+  }
   const input = selected.map((article, index) => ({
     article: index + 1,
     title: clean(article.title, 500),
     source: clean(article.source, 300) || "출처 없음",
     summary: clean(article.summary, 5000),
-    rss_content: clean(article.content, 12000),
+    key_content: clean(article.extracted_content || article.summary || article.content, 12000),
+    extraction_status: article.extraction_status || "rss_fallback",
   }));
 
   let apiResponse;
@@ -165,13 +177,13 @@ export async function generateGroupDraft(env, rawGroupId, options = {}) {
     if (!title || !content || tags.length !== 10) throw new Error("Invalid structured output");
 
     const status = ["draft", "review", "queued"].includes(options.status) ? options.status : "draft";
-    if (options.preventDuplicate) {
+    if (preventDuplicate) {
       const existing = await env.DB.prepare(
         "SELECT id FROM drafts WHERE article_group_id = ? LIMIT 1",
       ).bind(groupId).first();
       if (existing) return failure("이미 초안이 생성된 이슈 그룹입니다.", 409, "DRAFT_EXISTS");
     }
-    const insertSql = options.preventDuplicate
+    const insertSql = preventDuplicate
       ? `INSERT INTO drafts (article_group_id, title, content, tags, status)
         SELECT ?, ?, ?, ?, ? WHERE NOT EXISTS
           (SELECT 1 FROM drafts WHERE article_group_id = ?)
@@ -180,10 +192,10 @@ export async function generateGroupDraft(env, rawGroupId, options = {}) {
         VALUES (?, ?, ?, ?, ?)
         RETURNING id, article_group_id, title, content, tags, status, created_at, updated_at`;
     const statement = env.DB.prepare(insertSql);
-    draft = options.preventDuplicate
+    draft = preventDuplicate
       ? await statement.bind(groupId, title, content, JSON.stringify(tags), status, groupId).first()
       : await statement.bind(groupId, title, content, JSON.stringify(tags), status).first();
-    if (!draft && options.preventDuplicate) {
+    if (!draft && preventDuplicate) {
       return failure("이미 초안이 생성된 이슈 그룹입니다.", 409, "DRAFT_EXISTS");
     }
     draft.tags = tags;
@@ -205,3 +217,4 @@ export function onRequest(context) {
   }
   return onRequestPost(context);
 }
+import { extractAndStore } from "../../../lib/article-content.js";

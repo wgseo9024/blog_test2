@@ -2,3 +2,7 @@
 .env*
 .wrangler/
 node_modules/
+publisher-app/.session/
+publisher-app/artifacts/
+publisher-app/.env*
+publisher-app/*.log

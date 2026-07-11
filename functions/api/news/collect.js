@@ -64,6 +64,16 @@ const atomLink = (entry) => {
   return attributeValue(preferred || tags[0] || "", "href");
 };
 
+const imageCandidate = (record) => {
+  const tags = record.match(/<(?:media:content|media:thumbnail|enclosure)\b[^>]*>/gi) || [];
+  for (const tag of tags) {
+    const url = attributeValue(tag, "url");
+    const type = attributeValue(tag, "type");
+    if (url && (!type || type.startsWith("image/"))) return url.slice(0, 3000);
+  }
+  return "";
+};
+
 const normalizeDate = (value) => {
   const cleaned = cleanMarkup(value, 200);
   if (!cleaned) return "";
@@ -101,6 +111,7 @@ const parseFeed = (xml, source) => {
       content: cleanMarkup(encoded || description, 50000),
       published_at: normalizeDate(elementValue(record, ["pubDate", "published", "updated", "dc:date"])),
       source: source.name,
+      image_url: imageCandidate(record),
     };
   });
 };
@@ -177,12 +188,17 @@ const collectSource = async (env, source) => {
         result.duplicates += 1;
         continue;
       }
-      await env.DB.prepare(`INSERT INTO articles
-        (title, url, source, summary, content, published_at)
-        VALUES (?, ?, ?, ?, ?, ?)`)
+      const inserted = await env.DB.prepare(`INSERT INTO articles
+        (title, url, source, summary, content, published_at, image_url)
+        VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`)
         .bind(article.title, article.url, article.source, article.summary || null,
-          article.content || null, article.published_at || null)
-        .run();
+          article.content || null, article.published_at || null, article.image_url || null)
+        .first();
+      if (inserted?.id && article.image_url && /^https?:\/\//i.test(article.image_url)) {
+        await env.DB.prepare(`INSERT OR IGNORE INTO article_images
+          (article_id, image_url, source, article_url, candidate_type) VALUES (?, ?, ?, ?, 'rss')`)
+          .bind(inserted.id, article.image_url, article.source, article.url).run();
+      }
       result.inserted += 1;
     } catch (error) {
       if (String(error?.message || "").toLowerCase().includes("unique")) {

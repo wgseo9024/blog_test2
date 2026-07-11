@@ -1,0 +1,7 @@
+{
+  "name": "blog-test2-publisher",
+  "private": true,
+  "type": "module",
+  "scripts": { "start": "node src/index.js", "check": "node --check src/index.js" },
+  "dependencies": { "playwright": "^1.53.0" }
+}

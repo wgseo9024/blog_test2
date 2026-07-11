@@ -1,4 +1,3 @@
-const SIMILARITY_THRESHOLD = 0.55;
 const ARTICLE_LIMIT = 200;
 
 const json = (data, status = 200, headers = {}) => Response.json(data, {
@@ -92,12 +91,38 @@ const hasCommonEntity = (left, right) => intersection(left, right)
 
 const sourceKey = (source) => String(source || "").trim().toLowerCase() || "unknown";
 
-const buildGroups = (articles) => {
+const quotedEntities = (title) => new Set([
+  ...String(title || "").matchAll(/[‘'“"《〈<]([^’'”"》〉>]{2,30})[’'”"》〉>]/g),
+  ...String(title || "").matchAll(/([가-힣A-Za-z0-9]{2,20})(?: 측| 소속사| 제작진| 시즌| 감독| 작가)/g),
+].map((match) => normalizeTitle(match[1]).trim()).filter(Boolean));
+
+const entitySet = (article, tokens) => new Set([
+  ...quotedEntities(article.title),
+  ...[...tokens].filter((token) => token.length >= 2 && !GENERIC_ANCHORS.has(token) && !/^\d+$/.test(token)),
+]);
+
+const timeSimilarity = (left, right, maxHours) => {
+  const a = new Date(left.published_at || left.created_at).getTime();
+  const b = new Date(right.published_at || right.created_at).getTime();
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return 0.5;
+  return Math.max(0, 1 - Math.abs(a - b) / (maxHours * 3600000));
+};
+
+const combinedScore = (left, right, settings) => {
+  const tokenScore = jaccard(left.tokens, right.tokens);
+  const entityScore = jaccard(left.entities, right.entities);
+  const temporalScore = timeSimilarity(left, right, settings.max_time_gap_hours);
+  return tokenScore * settings.token_weight
+    + entityScore * settings.entity_weight
+    + temporalScore * settings.time_weight;
+};
+
+const buildGroups = (articles, settings) => {
   const prepared = [];
   for (const article of articles) {
     try {
       const title = titleTokens(article.title, article.source);
-      if (title.tokens.size) prepared.push({ ...article, ...title });
+      if (title.tokens.size) prepared.push({ ...article, ...title, entities: entitySet(article, title.tokens) });
     } catch (error) {
       console.error("Article title preparation failed", article?.id, error);
     }
@@ -112,8 +137,10 @@ const buildGroups = (articles) => {
     for (const candidate of prepared) {
       if (candidate.id === seed.id || assigned.has(candidate.id)) continue;
       try {
-        const score = jaccard(seed.tokens, candidate.tokens);
-        if (score >= SIMILARITY_THRESHOLD && hasCommonEntity(seed.tokens, candidate.tokens)) {
+        const score = combinedScore(seed, candidate, settings);
+        if (score >= settings.similarity_threshold
+          && (hasCommonEntity(seed.tokens, candidate.tokens)
+            || intersection(seed.entities, candidate.entities).length > 0)) {
           members.push({ article: candidate, score });
         }
       } catch (error) {
@@ -195,6 +222,8 @@ const saveGroup = async (env, members) => {
 
 export async function onRequestPost({ env }) {
   try {
+    const settings = await env.DB.prepare("SELECT * FROM grouping_settings WHERE id = 1").first()
+      || { similarity_threshold: 0.56, token_weight: 0.5, entity_weight: 0.35, time_weight: 0.15, max_time_gap_hours: 72 };
     const { results } = await env.DB.prepare(`SELECT a.id, a.title, a.source, a.published_at, a.created_at
       FROM articles a
       WHERE a.status = 'new'
@@ -202,7 +231,7 @@ export async function onRequestPost({ env }) {
       ORDER BY COALESCE(a.published_at, a.created_at) DESC, a.id DESC
       LIMIT ?`).bind(ARTICLE_LIMIT).all();
     const articles = results || [];
-    const candidates = buildGroups(articles);
+    const candidates = buildGroups(articles, settings);
     let groupsCreated = 0;
     const groupedIds = new Set();
 
@@ -223,6 +252,7 @@ export async function onRequestPost({ env }) {
         groupsCreated,
         articlesGrouped: groupedIds.size,
         remaining: Math.max(0, articles.length - groupedIds.size),
+        similarity_threshold: settings.similarity_threshold,
       },
     });
   } catch (error) {

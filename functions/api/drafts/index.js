@@ -12,10 +12,16 @@ const parseDraft = (draft) => {
   }
 };
 
-export async function onRequestGet({ env }) {
+export async function onRequestGet({ env, request }) {
   try {
+    const status = new URL(request.url).searchParams.get("status");
+    if (status && !new Set(["draft", "review", "queued", "published", "failed"]).has(status)) {
+      return failure("올바른 상태 필터가 아닙니다.", 400);
+    }
     const { results } = await env.DB.prepare(`SELECT id, article_group_id, title, content, tags,
-      status, created_at, updated_at FROM drafts ORDER BY created_at DESC, id DESC LIMIT 100`).all();
+      status, image_mode, publish_error, created_at, updated_at FROM drafts
+      ${status ? "WHERE status = ?" : ""} ORDER BY created_at DESC, id DESC LIMIT 100`)
+      .bind(...(status ? [status] : [])).all();
     const drafts = (results || []).map(parseDraft);
     return json({ success: true, data: { drafts, count: drafts.length } });
   } catch (error) {

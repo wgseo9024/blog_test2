@@ -1,23 +1,47 @@
 import { onRequestPost as collectNews } from "../news/collect.js";
 import { onRequestPost as groupNews } from "../news/group.js";
 import { generateGroupDraft } from "../groups/[id]/generate.js";
-import { ensureSettings, failure, json, nextRunAt, seoulDayBounds } from "../../lib/automation.js";
+import {
+  acquireRunLock, ensureSettings, failure, json, MAX_DAILY_LIMIT,
+  nextRunAt, releaseRunLock, seoulDayBounds,
+} from "../../lib/automation.js";
 
 const responseData = async (response) => {
   try { return await response.json(); } catch { return null; }
 };
 
-export async function executeAutomation({ env }) {
+export async function executeAutomation({ env, triggerType = "scheduler" }) {
+  const ownerId = crypto.randomUUID();
+  const startedAt = new Date();
+  try {
+    if (!await acquireRunLock(env, ownerId, startedAt)) {
+      await env.DB.prepare(`INSERT INTO automation_run_logs
+        (owner_id, trigger_type, status, started_at, finished_at, error_message)
+        VALUES (?, ?, 'skipped', ?, ?, ?)`)
+        .bind(ownerId, triggerType, startedAt.toISOString(), startedAt.toISOString(), "이전 실행이 진행 중입니다.").run();
+      return json({ success: true, data: { skipped: true, reason: "RUN_IN_PROGRESS",
+        collected: 0, groups_created: 0, drafts_created: 0, remaining_daily_limit: 0, errors: [] } }, 202);
+    }
+  } catch (error) {
+    console.error("Automation lock acquisition error", error);
+    return failure("자동화 실행 잠금을 확인하지 못했습니다.", 500);
+  }
+
   const errors = [];
   let collected = 0;
   let groupsCreated = 0;
   let draftsCreated = 0;
   let settings;
 
-  try { settings = await ensureSettings(env); } catch (error) {
-    console.error("Automation run settings error", error);
-    return failure("자동화 설정을 불러오지 못해 실행을 시작할 수 없습니다.");
-  }
+  let response;
+  try {
+    await env.DB.prepare(`INSERT INTO automation_run_logs
+      (owner_id, trigger_type, status, started_at) VALUES (?, ?, 'running', ?)`)
+      .bind(ownerId, triggerType, startedAt.toISOString()).run();
+    try { settings = await ensureSettings(env); } catch (error) {
+      console.error("Automation run settings error", error);
+      throw new Error("자동화 설정을 불러오지 못해 실행을 시작할 수 없습니다.");
+    }
 
   try {
     const response = await collectNews({
@@ -51,7 +75,8 @@ export async function executeAutomation({ env }) {
       WHERE created_at >= datetime(?) AND created_at < datetime(?) AND action IN ('draft_created', 'queued', 'published')`)
       .bind(start, end).first();
     processedToday = Number(row?.count || 0);
-    const allowed = Math.max(0, settings.daily_limit - processedToday);
+    const dailyLimit = Math.min(MAX_DAILY_LIMIT, Math.max(1, Number(settings.daily_limit) || 1));
+    const allowed = Math.max(0, dailyLimit - processedToday);
     if (allowed > 0) {
       const { results } = await env.DB.prepare(`SELECT g.id FROM article_groups g
         WHERE NOT EXISTS (SELECT 1 FROM drafts d WHERE d.article_group_id = g.id)
@@ -85,7 +110,7 @@ export async function executeAutomation({ env }) {
   }
 
   const now = new Date();
-  const remaining = Math.max(0, settings.daily_limit - processedToday - draftsCreated);
+  const remaining = Math.max(0, Math.min(MAX_DAILY_LIMIT, settings.daily_limit) - processedToday - draftsCreated);
   try {
     const following = nextRunAt({ ...settings, last_run_at: now.toISOString() }, now);
     await env.DB.prepare(`UPDATE automation_settings SET last_run_at = ?, next_run_at = ?,
@@ -95,10 +120,28 @@ export async function executeAutomation({ env }) {
     errors.push({ step: "schedule", message: "다음 실행 시간을 갱신하지 못했습니다." });
   }
 
-  return json({ success: true, data: {
+  const finalStatus = errors.length ? "partial" : "succeeded";
+  await env.DB.prepare(`UPDATE automation_run_logs SET status = ?, finished_at = ?,
+    collected_count = ?, groups_created = ?, drafts_created = ?, error_message = ?, details = ?
+    WHERE owner_id = ?`)
+    .bind(finalStatus, new Date().toISOString(), collected, groupsCreated, draftsCreated,
+      errors[0]?.message || null, JSON.stringify({ errors }), ownerId).run();
+  response = json({ success: true, data: {
+    skipped: false,
     collected, groups_created: groupsCreated, drafts_created: draftsCreated,
     remaining_daily_limit: remaining, errors,
   } });
+  } catch (error) {
+    console.error("Automation run fatal error", error);
+    try {
+      await env.DB.prepare(`UPDATE automation_run_logs SET status = 'failed', finished_at = ?, error_message = ?
+        WHERE owner_id = ?`).bind(new Date().toISOString(), String(error?.message || "자동화 실행 실패").slice(0, 1000), ownerId).run();
+    } catch (logError) { console.error("Automation failure log error", logError); }
+    response = failure("자동화 실행을 완료하지 못했습니다.", 500);
+  } finally {
+    try { await releaseRunLock(env, ownerId); } catch (error) { console.error("Automation lock release error", error); }
+  }
+  return response;
 }
 
 const bearerToken = (request) => {
@@ -123,7 +166,7 @@ export async function onRequestPost({ request, env }) {
   if (!tokensMatch(bearerToken(request), env.AUTOMATION_TOKEN)) {
     return failure("자동화 호출 권한이 없습니다.", 401, { "WWW-Authenticate": "Bearer" });
   }
-  return executeAutomation({ env });
+  return executeAutomation({ env, triggerType: "scheduler" });
 }
 
 export function onRequest(context) {

@@ -13,6 +13,9 @@ export const DEFAULT_SETTINGS = Object.freeze({
 
 export const ALLOWED_INTERVALS = new Set([10, 30, 60, 120, 180, 360]);
 export const ALLOWED_MODES = new Set(["draft", "review", "publish"]);
+export const MAX_DAILY_LIMIT = 30;
+export const LOCK_NAME = "automation-run";
+export const LOCK_TTL_MS = 20 * 60 * 1000;
 
 export const json = (data, status = 200, headers = {}) => Response.json(data, {
   status,
@@ -51,6 +54,25 @@ export const seoulDayBounds = (date = new Date()) => {
   return { start: start.toISOString(), end: new Date(start.getTime() + 86400000).toISOString() };
 };
 
+const seoulDateKey = (date) => new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit",
+}).format(date);
+
+const atSeoulTime = (day, time) => new Date(`${day}T${time}:00+09:00`);
+
+export const isWithinSeoulWindow = (settings, date = new Date()) => {
+  const day = seoulDateKey(date);
+  const start = atSeoulTime(day, settings.start_time);
+  let end = atSeoulTime(day, settings.end_time);
+  if (settings.start_time === settings.end_time) return true;
+  if (end <= start) {
+    if (date < start) return date >= new Date(start.getTime() - 86400000)
+      && date <= end;
+    end = new Date(end.getTime() + 86400000);
+  }
+  return date >= start && date <= end;
+};
+
 export const nextRunAt = (settings, from = new Date()) => {
   if (!settings.enabled) return null;
   const interval = settings.interval_minutes * 60000;
@@ -59,14 +81,31 @@ export const nextRunAt = (settings, from = new Date()) => {
     : new Date(from.getTime() + interval);
   if (Number.isNaN(candidate.getTime()) || candidate < from) candidate = new Date(from.getTime() + interval);
 
-  const seoulDate = new Date(candidate.getTime() + 9 * 3600000);
-  const day = seoulDate.toISOString().slice(0, 10);
-  const start = new Date(`${day}T${settings.start_time}:00+09:00`);
-  const end = new Date(`${day}T${settings.end_time}:00+09:00`);
-  if (candidate < start) candidate = start;
-  if (candidate > end) {
-    const tomorrow = new Date(start.getTime() + 86400000);
-    candidate = tomorrow;
-  }
+  const day = seoulDateKey(candidate);
+  const start = atSeoulTime(day, settings.start_time);
+  let end = atSeoulTime(day, settings.end_time);
+  if (settings.start_time === settings.end_time) return candidate.toISOString();
+  if (end <= start) {
+    const localMinutes = Number(new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Seoul",
+      hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(candidate).replace(":", ""));
+    const endMinutes = Number(settings.end_time.replace(":", ""));
+    const startMinutes = Number(settings.start_time.replace(":", ""));
+    if (localMinutes > endMinutes && localMinutes < startMinutes) candidate = start;
+  } else if (candidate < start) candidate = start;
+  else if (candidate > end) candidate = new Date(start.getTime() + 86400000);
   return candidate.toISOString();
 };
+
+export const acquireRunLock = async (env, ownerId, now = new Date()) => {
+  const expiresAt = new Date(now.getTime() + LOCK_TTL_MS).toISOString();
+  await env.DB.prepare("DELETE FROM automation_locks WHERE lock_name = ? AND expires_at <= ?")
+    .bind(LOCK_NAME, now.toISOString()).run();
+  const result = await env.DB.prepare(`INSERT OR IGNORE INTO automation_locks
+    (lock_name, owner_id, acquired_at, expires_at) VALUES (?, ?, ?, ?)`)
+    .bind(LOCK_NAME, ownerId, now.toISOString(), expiresAt).run();
+  return Boolean(result.meta?.changes);
+};
+
+export const releaseRunLock = async (env, ownerId) => env.DB.prepare(
+  "DELETE FROM automation_locks WHERE lock_name = ? AND owner_id = ?",
+).bind(LOCK_NAME, ownerId).run();
