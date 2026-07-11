@@ -10,6 +10,9 @@
 - `functions/api/articles/index.js`: `GET /api/articles`, `POST /api/articles`
 - `functions/api/articles/[id].js`: `GET /api/articles/:id`, `DELETE /api/articles/:id`
 - `functions/api/news/collect.js`: `POST /api/news/collect` (고정 RSS 수집 및 D1 저장)
+- `functions/api/news/group.js`: `POST /api/news/group` (새 기사 유사도 분석 및 그룹 생성)
+- `functions/api/groups/index.js`: `GET /api/groups` (최신 이슈 그룹 목록)
+- `functions/api/groups/[id].js`: `GET /api/groups/:id` (그룹 기사와 요약 조회)
 - `index.html`: 기사 제목, URL, 출처, 요약 저장 폼과 최근 기사 목록 테스트 영역
 
 목록 API는 최신순으로 최대 100건을 반환하며 `status`, `source`, `keyword` 쿼리
@@ -115,3 +118,40 @@ curl -X POST 'http://localhost:8788/api/news/collect' \
 4. 같은 선택으로 다시 수집해 기존 URL이 `duplicates`로 집계되는지 확인합니다.
 5. 위 `curl` 예제로 무본문 전체 수집과 `sources` 선택 수집을 각각 확인합니다.
 6. `sources`를 빈 배열로 보내면 HTTP 400, GET 요청은 HTTP 405인지 확인합니다.
+
+## 유사 기사 그룹 API
+
+`POST /api/news/group`는 `status = 'new'`인 최신 기사 최대 200건의 제목을
+정규화한 뒤 Jaccard 유사도 0.55 이상인 후보를 묶습니다. 공통 고유명사 후보가 있고
+서로 다른 언론사가 포함된 2건 이상의 그룹만 저장합니다. 저장된 기사는 `grouped`로
+변경되며, 이미 그룹에 포함된 기사는 다시 처리하지 않습니다.
+
+```bash
+curl -X POST 'http://localhost:8788/api/news/group'
+```
+
+성공 응답 예시입니다.
+
+```json
+{
+  "success": true,
+  "data": {
+    "processed": 120,
+    "groupsCreated": 10,
+    "articlesGrouped": 28,
+    "remaining": 92
+  }
+}
+```
+
+최신 그룹 목록과 특정 그룹의 기사 목록은 다음처럼 조회합니다. 상세 API는 기사 원문
+전체를 반환하지 않고 제목, 언론사, URL, 요약, 발행일과 유사도만 반환합니다.
+
+```bash
+curl 'http://localhost:8788/api/groups'
+curl 'http://localhost:8788/api/groups/1'
+```
+
+화면의 **유사 기사 그룹화** 버튼으로 작업을 실행한 뒤 생성·그룹화·미그룹 건수를
+확인할 수 있습니다. 그룹을 클릭하면 기사별 제목과 요약이 표시되고, **이 그룹으로
+블로그 초안 생성**을 누르면 표시된 요약만 `/api/generate` 입력으로 사용합니다.

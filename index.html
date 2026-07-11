@@ -544,6 +544,58 @@
       margin-top: 18px;
     }
 
+    .group-panel {
+      margin-top: 18px;
+    }
+
+    .group-layout {
+      display: grid;
+      grid-template-columns: minmax(280px, 0.8fr) minmax(0, 1.2fr);
+      gap: 14px;
+      margin-top: 16px;
+    }
+
+    .group-list,
+    .group-detail {
+      display: grid;
+      gap: 10px;
+      align-content: start;
+    }
+
+    .group-item,
+    .group-article {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 13px 14px;
+      background: #fbfcfe;
+    }
+
+    .group-item {
+      width: 100%;
+      color: inherit;
+      text-align: left;
+    }
+
+    .group-item:hover,
+    .group-item.active {
+      border-color: var(--primary);
+      background: #f1fcf6;
+    }
+
+    .group-item strong,
+    .group-article h4 {
+      display: block;
+      margin: 0 0 8px;
+      line-height: 1.45;
+    }
+
+    .group-article p {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
     .rss-collector {
       margin-top: 18px;
     }
@@ -727,7 +779,8 @@
       }
 
       .rss-source-grid,
-      .rss-results {
+      .rss-results,
+      .group-layout {
         grid-template-columns: 1fr;
       }
     }
@@ -1038,6 +1091,23 @@ AI 반도체 시장의 성장은 칩 제조사만의 이야기가 아닙니다. 
             <span class="article-feedback" id="rssFeedback" role="status" aria-live="polite"></span>
           </div>
           <div class="rss-results" id="rssResults" aria-live="polite"></div>
+        </section>
+
+        <section class="card group-panel" aria-labelledby="groupPanelTitle">
+          <div class="section-title">
+            <div>
+              <h3 id="groupPanelTitle">유사 연예 이슈 그룹</h3>
+              <p style="margin:5px 0 0;color:var(--muted);font-size:13px;">여러 언론사가 다룬 같은 이슈를 묶고, 요약을 바탕으로 초안을 만듭니다.</p>
+            </div>
+            <button class="btn btn-blue" id="groupNewsBtn" type="button">유사 기사 그룹화</button>
+          </div>
+          <p class="article-feedback" id="groupFeedback" role="status" aria-live="polite"></p>
+          <div class="group-layout">
+            <div class="group-list" id="groupList" aria-label="이슈 그룹 목록"></div>
+            <div class="group-detail" id="groupDetail" aria-live="polite">
+              <div class="summary-box">그룹을 선택하면 포함된 기사 제목과 요약을 확인할 수 있습니다. 기사 원문 전체는 자동 표시하지 않습니다.</div>
+            </div>
+          </div>
         </section>
 
         <section class="card article-test-card" aria-labelledby="articleTestTitle">
@@ -1416,6 +1486,138 @@ ${content}
       }
     });
 
+    const setGroupFeedback = (message, isError = false) => {
+      const feedback = document.getElementById("groupFeedback");
+      feedback.textContent = message;
+      feedback.style.color = isError ? "var(--danger)" : "var(--muted)";
+    };
+
+    const renderGroupDetail = (group) => {
+      const detail = document.getElementById("groupDetail");
+      const heading = document.createElement("div");
+      heading.className = "section-title";
+      const title = document.createElement("h3");
+      title.textContent = group.representative_title;
+      const draftButton = document.createElement("button");
+      draftButton.className = "btn btn-primary";
+      draftButton.type = "button";
+      draftButton.textContent = "이 그룹으로 블로그 초안 생성";
+      draftButton.addEventListener("click", () => {
+        const usable = group.articles.filter((article) => article.summary);
+        if (!usable.length) {
+          setGroupFeedback("초안 생성에 사용할 기사 요약이 없습니다.", true);
+          return;
+        }
+        document.getElementById("articleTitle").value = group.representative_title;
+        document.getElementById("articleContent").value = usable.map((article) =>
+          `[${article.source || "출처 없음"}] ${article.title}\n${article.summary}`
+        ).join("\n\n");
+        document.getElementById("runBtn").click();
+        document.getElementById("runBtn").scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+      heading.append(title, draftButton);
+
+      const articles = group.articles.map((article) => {
+        const item = document.createElement("article");
+        item.className = "group-article";
+        const articleTitle = document.createElement("h4");
+        const link = document.createElement("a");
+        link.href = article.url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = article.title;
+        articleTitle.append(link);
+        const meta = document.createElement("div");
+        meta.className = "news-meta";
+        meta.style.marginBottom = "0";
+        meta.textContent = `${article.source || "출처 없음"} · ${formatArticleDate(article.published_at)} · 유사도 ${Number(article.similarity_score || 0).toFixed(2)}`;
+        item.append(articleTitle, meta);
+        if (article.summary) {
+          const summary = document.createElement("p");
+          summary.textContent = article.summary;
+          item.append(summary);
+        }
+        return item;
+      });
+      detail.replaceChildren(heading, ...articles);
+    };
+
+    const loadGroupDetail = async (id, selectedButton) => {
+      document.querySelectorAll(".group-item").forEach((item) => item.classList.remove("active"));
+      selectedButton?.classList.add("active");
+      try {
+        const response = await fetch(`/api/groups/${encodeURIComponent(id)}`);
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+          throw new Error(result.error?.message || "이슈 그룹을 불러오지 못했습니다.");
+        }
+        renderGroupDetail(result.data.group);
+      } catch (error) {
+        setGroupFeedback(error.message || "그룹 상세 요청 중 오류가 발생했습니다.", true);
+      }
+    };
+
+    const renderGroups = (groups) => {
+      const list = document.getElementById("groupList");
+      if (!groups.length) {
+        const empty = document.createElement("div");
+        empty.className = "summary-box";
+        empty.textContent = "생성된 이슈 그룹이 없습니다.";
+        list.replaceChildren(empty);
+        return;
+      }
+      list.replaceChildren(...groups.map((group) => {
+        const button = document.createElement("button");
+        button.className = "group-item";
+        button.type = "button";
+        const title = document.createElement("strong");
+        title.textContent = group.representative_title;
+        const meta = document.createElement("span");
+        meta.className = "news-meta";
+        meta.style.marginBottom = "0";
+        meta.textContent = `${group.article_count}건 · ${group.sources.join(", ")} · ${formatArticleDate(group.created_at)}`;
+        button.append(title, meta);
+        button.addEventListener("click", () => loadGroupDetail(group.id, button));
+        return button;
+      }));
+    };
+
+    const loadGroups = async () => {
+      try {
+        const response = await fetch("/api/groups");
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+          throw new Error(result.error?.message || "이슈 그룹 목록을 불러오지 못했습니다.");
+        }
+        renderGroups(result.data.groups);
+        setGroupFeedback(`생성된 이슈 그룹 ${result.data.count}개를 불러왔습니다.`);
+      } catch (error) {
+        setGroupFeedback(error.message || "그룹 목록 요청 중 오류가 발생했습니다.", true);
+      }
+    };
+
+    document.getElementById("groupNewsBtn").addEventListener("click", async () => {
+      const button = document.getElementById("groupNewsBtn");
+      button.disabled = true;
+      button.innerHTML = '<span class="spinner" aria-hidden="true"></span>그룹화 중...';
+      setGroupFeedback("최근 새 기사 제목을 비교하고 있습니다...");
+      try {
+        const response = await fetch("/api/news/group", { method: "POST" });
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+          throw new Error(result.error?.message || "유사 기사 그룹화에 실패했습니다.");
+        }
+        const data = result.data;
+        setGroupFeedback(`처리 ${data.processed}건 · 그룹 ${data.groupsCreated}개 생성 · 기사 ${data.articlesGrouped}건 그룹화 · 미그룹 ${data.remaining}건`);
+        await Promise.all([loadGroups(), loadSavedArticles()]);
+      } catch (error) {
+        setGroupFeedback(error.message || "그룹화 요청 중 오류가 발생했습니다.", true);
+      } finally {
+        button.disabled = false;
+        button.textContent = "유사 기사 그룹화";
+      }
+    });
+
     document.getElementById("articleSaveForm").addEventListener("submit", async (event) => {
       event.preventDefault();
       const form = event.currentTarget;
@@ -1451,6 +1653,7 @@ ${content}
 
       if (savedTitle) document.getElementById("blogTitle").value = savedTitle;
       if (savedContent) document.getElementById("blogContent").value = savedContent;
+      loadGroups();
     });
   </script>
 </body>
