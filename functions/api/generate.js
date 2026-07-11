@@ -48,7 +48,7 @@ export function validateGeneratedPost(post) {
   const remainder = content.replace(/[^.!?]+[.!?]+(?:[\"'”’」』)]*)/g, "").trim();
   const sentenceLengths = sentenceMatches.map((match) => match[0].trim().length);
   const sentenceRuleValid = !remainder && sentenceLengths.length === 7 && sentenceLengths.every((length) => length >= 90);
-  return { valid: content.length >= 600 && content.length <= 800 && sentenceRuleValid && uniqueTags.length === 10, content, tags: uniqueTags, characterCount: content.length, sentenceCount: sentenceLengths.length, sentenceLengths };
+  return { valid: content.length >= 600 && content.length <= 800 && sentenceRuleValid && uniqueTags.length === 10, content, tags: uniqueTags, sentences: sentenceMatches.map((match) => match[0].trim()), characterCount: content.length, sentenceCount: sentenceLengths.length, sentenceLengths };
 }
 
 const extractOutputText = (result) =>
@@ -149,7 +149,11 @@ export async function onRequestPost({ request, env }) {
     return json({
       title: post.title.trim(),
       content: validation.content,
+      bodyBlocks: validation.sentences,
       tags: validation.tags,
+      status: "draft",
+      validation_status: "passed",
+      validationIssues: [],
     });
   } catch (error) {
     console.error("OpenAI response parse error", error);

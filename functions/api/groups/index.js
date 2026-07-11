@@ -16,7 +16,7 @@ export async function onRequestGet({ env }) {
       JOIN article_group_items i ON i.group_id = g.id
       JOIN articles a ON a.id = i.article_id
       GROUP BY g.id, g.representative_title, g.created_at
-      HAVING COUNT(i.article_id) >= 2
+      HAVING COUNT(i.article_id) >= 1
       ORDER BY g.created_at DESC, g.id DESC
       LIMIT 100`).all();
     const groups = (results || []).map((group) => ({

@@ -151,9 +151,10 @@ curl -X POST 'http://localhost:8788/api/news/collect' \
 ## 유사 기사 그룹 API
 
 `POST /api/news/group`는 `status = 'new'`인 최신 기사 최대 200건의 제목을
-정규화한 뒤 Jaccard 유사도 0.55 이상인 후보를 묶습니다. 공통 고유명사 후보가 있고
-서로 다른 언론사가 포함된 2건 이상의 그룹만 저장합니다. 저장된 기사는 `grouped`로
-변경되며, 이미 그룹에 포함된 기사는 다시 처리하지 않습니다.
+정규화한 뒤 Jaccard 유사도 기준을 충족하는 서로 다른 언론사의 기사를 먼저 묶습니다.
+다중 출처로 묶이지 않은 기사도 각각 단일 이슈 그룹으로 저장해 초안 생성 흐름에서
+누락되지 않게 합니다. 저장된 기사는 `grouped`로 변경되며, 이미 그룹에 포함된 기사는
+다시 처리하지 않습니다.
 
 ```bash
 curl -X POST 'http://localhost:8788/api/news/group'
@@ -186,8 +187,8 @@ curl 'http://localhost:8788/api/groups/1'
 
 ## 기사 그룹 기반 블로그 초안 API
 
-`POST /api/groups/:id/generate`는 그룹에 기사 2개 이상이 있을 때 최근 기사 중 최대
-5개를 OpenAI Responses API에 전달합니다. 서로 다른 언론사의 기사를 먼저 고르며,
+`POST /api/groups/:id/generate`는 그룹의 최근 기사 중 최대 3개를 OpenAI Responses
+API에 전달합니다. 여러 기사가 있으면 서로 다른 언론사의 내용을 교차 검토하며,
 전달 필드는 제목, 출처, 요약, RSS content로 제한됩니다. 생성된 제목, 본문, 태그
 10개는 `drafts` 테이블에 즉시 저장되고 저장된 `draft.id`가 함께 반환됩니다.
 

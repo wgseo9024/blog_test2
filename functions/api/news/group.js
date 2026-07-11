@@ -117,7 +117,7 @@ const combinedScore = (left, right, settings) => {
     + temporalScore * settings.time_weight;
 };
 
-const buildGroups = (articles, settings) => {
+export const buildGroups = (articles, settings) => {
   const prepared = [];
   for (const article of articles) {
     try {
@@ -150,11 +150,15 @@ const buildGroups = (articles, settings) => {
 
     const knownSources = new Set(members.map(({ article }) => sourceKey(article.source))
       .filter((source) => source !== "unknown"));
-    if (members.length < 2 || knownSources.size < 2) {
-      continue;
+    if (members.length >= 2 && knownSources.size >= 2) {
+      members.forEach(({ article }) => assigned.add(article.id));
+      groups.push(members);
     }
-    members.forEach(({ article }) => assigned.add(article.id));
-    groups.push(members);
+  }
+  // 다른 언론사의 동일 이슈가 없어도 수집 기사가 초안 생성 흐름에서 사라지지 않도록
+  // 다중 출처 그룹을 우선 만든 뒤 남은 기사는 각각 단일 이슈 그룹으로 승격한다.
+  for (const article of prepared) {
+    if (!assigned.has(article.id)) groups.push([{ article, score: 1 }]);
   }
   return groups;
 };
@@ -204,7 +208,7 @@ const saveGroup = async (env, members) => {
     }
   }
 
-  if (savedIds.length < 2) {
+  if (savedIds.length < 1) {
     // 부분 실패로 유효한 그룹이 되지 못한 경우 다음 실행에서 재처리할 수 있게 정리한다.
     for (const id of savedIds) {
       try {
