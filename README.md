@@ -13,6 +13,9 @@
 - `functions/api/news/group.js`: `POST /api/news/group` (새 기사 유사도 분석 및 그룹 생성)
 - `functions/api/groups/index.js`: `GET /api/groups` (최신 이슈 그룹 목록)
 - `functions/api/groups/[id].js`: `GET /api/groups/:id` (그룹 기사와 요약 조회)
+- `functions/api/groups/[id]/generate.js`: `POST /api/groups/:id/generate` (기사 교차 비교, 초안 생성 및 저장)
+- `functions/api/drafts/index.js`: `GET /api/drafts` (최신 초안 최대 100개)
+- `functions/api/drafts/[id].js`: `GET`, `PUT`, `DELETE /api/drafts/:id`
 - `index.html`: 기사 제목, URL, 출처, 요약 저장 폼과 최근 기사 목록 테스트 영역
 
 목록 API는 최신순으로 최대 100건을 반환하며 `status`, `source`, `keyword` 쿼리
@@ -153,5 +156,60 @@ curl 'http://localhost:8788/api/groups/1'
 ```
 
 화면의 **유사 기사 그룹화** 버튼으로 작업을 실행한 뒤 생성·그룹화·미그룹 건수를
-확인할 수 있습니다. 그룹을 클릭하면 기사별 제목과 요약이 표시되고, **이 그룹으로
-블로그 초안 생성**을 누르면 표시된 요약만 `/api/generate` 입력으로 사용합니다.
+확인할 수 있습니다. 그룹을 클릭하면 기사별 제목과 요약이 표시됩니다.
+
+## 기사 그룹 기반 블로그 초안 API
+
+`POST /api/groups/:id/generate`는 그룹에 기사 2개 이상이 있을 때 최근 기사 중 최대
+5개를 OpenAI Responses API에 전달합니다. 서로 다른 언론사의 기사를 먼저 고르며,
+전달 필드는 제목, 출처, 요약, RSS content로 제한됩니다. 생성된 제목, 본문, 태그
+10개는 `drafts` 테이블에 즉시 저장되고 저장된 `draft.id`가 함께 반환됩니다.
+
+```bash
+curl -X POST 'http://localhost:8788/api/groups/1/generate'
+```
+
+성공 응답 예시입니다.
+
+```json
+{
+  "success": true,
+  "data": {
+    "draft": {
+      "id": 7,
+      "article_group_id": 1,
+      "title": "블로그 제목",
+      "content": "블로그 본문",
+      "tags": ["태그1", "태그2", "태그3", "태그4", "태그5", "태그6", "태그7", "태그8", "태그9", "태그10"],
+      "status": "draft"
+    },
+    "article_count": 5
+  }
+}
+```
+
+OpenAI 호출 실패 응답은 `OPENAI_API_ERROR`, 사용할 수 없는 모델은
+`OPENAI_MODEL_ERROR`, 사용량·요청 한도 문제는 `OPENAI_USAGE_ERROR` 코드로
+구분합니다. 서버 로그에는 진단 정보를 남기지만 API 응답에는 내부 오류 상세나 키를
+노출하지 않습니다.
+
+## 저장된 초안 API
+
+```bash
+# 최신 초안 목록(최대 100개)과 단건 조회
+curl 'http://localhost:8788/api/drafts'
+curl 'http://localhost:8788/api/drafts/7'
+
+# 제목, 본문, 태그, 상태 수정
+curl -X PUT 'http://localhost:8788/api/drafts/7' \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"수정 제목","content":"수정 본문","tags":["연예뉴스","방송"],"status":"review"}'
+
+# 초안 삭제
+curl -X DELETE 'http://localhost:8788/api/drafts/7'
+```
+
+화면에서는 각 그룹의 **이 그룹으로 블로그 초안 생성** 버튼으로 생성 상태를 확인할
+수 있습니다. 완료된 초안은 기존 제목·본문·태그 편집기에 표시되며, **저장된 블로그
+초안** 목록에서도 다시 불러올 수 있습니다. 저장된 초안을 편집한 뒤 상단 **임시 저장**
+버튼을 누르면 제목, 본문, 태그, 상태가 D1에 반영됩니다.

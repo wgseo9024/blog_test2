@@ -548,6 +548,52 @@
       margin-top: 18px;
     }
 
+    .draft-panel {
+      margin-top: 18px;
+    }
+
+    .draft-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .draft-item {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      padding: 13px 14px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fbfcfe;
+    }
+
+    .draft-item button:first-child {
+      border: 0;
+      padding: 0;
+      background: transparent;
+      color: inherit;
+      text-align: left;
+    }
+
+    .draft-item strong { display: block; margin-bottom: 6px; }
+
+    .draft-editor-meta {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 140px;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .draft-editor-meta input,
+    .draft-editor-meta select {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px 11px;
+      background: #fbfcfe;
+    }
+
     .group-layout {
       display: grid;
       grid-template-columns: minmax(280px, 0.8fr) minmax(0, 1.2fr);
@@ -780,7 +826,8 @@
 
       .rss-source-grid,
       .rss-results,
-      .group-layout {
+      .group-layout,
+      .draft-editor-meta {
         grid-template-columns: 1fr;
       }
     }
@@ -956,7 +1003,7 @@
           <section class="card editor-card">
             <div class="section-title">
               <h3>AI 블로그 초안</h3>
-              <span class="badge green">자동 저장됨</span>
+              <span class="badge green" id="draftSaveState">브라우저 임시 초안</span>
             </div>
 
             <input class="title-input" id="blogTitle" value="AI 반도체 시장, 지금 주목해야 할 변화 3가지" />
@@ -1000,6 +1047,15 @@ AI 반도체 시장의 성장은 칩 제조사만의 이야기가 아닙니다. 
                 <span class="tag">#첨단패키징</span>
                 <span class="tag">#IT뉴스</span>
                 <span class="tag">#테크트렌드</span>
+              </div>
+              <div class="draft-editor-meta">
+                <input id="draftTagsInput" aria-label="태그 편집" placeholder="태그를 쉼표로 구분해 입력" />
+                <select id="draftStatus" aria-label="초안 상태">
+                  <option value="draft">초안</option>
+                  <option value="review">검토 중</option>
+                  <option value="ready">발행 준비</option>
+                  <option value="published">발행 완료</option>
+                </select>
               </div>
             </div>
           </section>
@@ -1110,6 +1166,18 @@ AI 반도체 시장의 성장은 칩 제조사만의 이야기가 아닙니다. 
           </div>
         </section>
 
+        <section class="card draft-panel" aria-labelledby="draftPanelTitle">
+          <div class="section-title">
+            <div>
+              <h3 id="draftPanelTitle">저장된 블로그 초안</h3>
+              <p style="margin:5px 0 0;color:var(--muted);font-size:13px;">D1에 저장된 최근 초안을 선택해 편집하거나 삭제할 수 있습니다.</p>
+            </div>
+            <button class="btn btn-outline" id="loadDraftsBtn" type="button">초안 목록 새로고침</button>
+          </div>
+          <p class="article-feedback" id="draftFeedback" role="status" aria-live="polite"></p>
+          <div class="draft-list" id="draftList"></div>
+        </section>
+
         <section class="card article-test-card" aria-labelledby="articleTestTitle">
           <div class="section-title">
             <div>
@@ -1152,6 +1220,8 @@ AI 반도체 시장의 성장은 칩 제조사만의 이야기가 아닙니다. 
   </div>
 
   <script>
+    let currentDraftId = null;
+
     const switches = document.querySelectorAll(".switch");
     switches.forEach((button) => {
       button.addEventListener("click", () => {
@@ -1183,7 +1253,21 @@ AI 반도체 시장의 성장은 칩 제조사만의 이야기가 아닙니다. 
         span.textContent = `#${tag.replace(/^#/, "")}`;
         return span;
       }));
+      document.getElementById("draftTagsInput").value = tags
+        .map((tag) => tag.replace(/^#/, ""))
+        .join(", ");
     };
+
+    const getEditorTags = () => document.getElementById("draftTagsInput").value
+      .split(",")
+      .map((tag) => tag.trim().replace(/^#+/, ""))
+      .filter(Boolean);
+
+    document.getElementById("draftTagsInput").addEventListener("input", (event) => {
+      renderTags(event.currentTarget.value.split(",").map((tag) => tag.trim()).filter(Boolean));
+    });
+
+    renderTags([...document.querySelectorAll("#tags .tag")].map((tag) => tag.textContent));
 
     document.getElementById("runBtn").addEventListener("click", async () => {
       const button = document.getElementById("runBtn");
@@ -1226,10 +1310,32 @@ AI 반도체 시장의 성장은 칩 제조사만의 이야기가 아닙니다. 
       }
     });
 
-    document.getElementById("saveBtn").addEventListener("click", () => {
+    document.getElementById("saveBtn").addEventListener("click", async () => {
       localStorage.setItem("blogTitle", document.getElementById("blogTitle").value);
       localStorage.setItem("blogContent", document.getElementById("blogContent").value);
-      showStatus("현재 초안이 브라우저에 임시 저장되었습니다.");
+      if (!currentDraftId) {
+        showStatus("현재 초안이 브라우저에 임시 저장되었습니다.");
+        return;
+      }
+      try {
+        const response = await fetch(`/api/drafts/${encodeURIComponent(currentDraftId)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: document.getElementById("blogTitle").value,
+            content: document.getElementById("blogContent").value,
+            tags: getEditorTags(),
+            status: document.getElementById("draftStatus").value,
+          }),
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) throw new Error(result.error?.message || "초안을 수정하지 못했습니다.");
+        document.getElementById("draftSaveState").textContent = `D1 저장됨 · #${currentDraftId}`;
+        showStatus("D1 초안을 수정했습니다.");
+        await loadDrafts();
+      } catch (error) {
+        showStatus(error.message || "초안 저장 중 오류가 발생했습니다.");
+      }
     });
 
     document.getElementById("copyAllBtn").addEventListener("click", async () => {
@@ -1492,6 +1598,106 @@ ${content}
       feedback.style.color = isError ? "var(--danger)" : "var(--muted)";
     };
 
+    const loadDraftIntoEditor = (draft) => {
+      currentDraftId = draft.id;
+      document.getElementById("blogTitle").value = draft.title;
+      document.getElementById("blogContent").value = draft.content;
+      document.getElementById("draftStatus").value = draft.status || "draft";
+      renderTags(draft.tags || []);
+      document.getElementById("draftSaveState").textContent = `D1 저장됨 · #${draft.id}`;
+      document.querySelector(".editor-card").scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+
+    const setDraftFeedback = (message, isError = false) => {
+      const feedback = document.getElementById("draftFeedback");
+      feedback.textContent = message;
+      feedback.style.color = isError ? "var(--danger)" : "var(--muted)";
+    };
+
+    const generateGroupDraft = async (groupId, button) => {
+      const originalText = button.textContent;
+      button.disabled = true;
+      button.innerHTML = '<span class="spinner" aria-hidden="true"></span>생성 중...';
+      setGroupFeedback("최대 5개 기사를 교차 비교해 초안을 생성하고 D1에 저장하고 있습니다...");
+      try {
+        const response = await fetch(`/api/groups/${encodeURIComponent(groupId)}/generate`, { method: "POST" });
+        const result = await response.json();
+        if (!response.ok || !result.success) throw new Error(result.error?.message || "그룹 초안을 생성하지 못했습니다.");
+        loadDraftIntoEditor(result.data.draft);
+        setGroupFeedback(`초안 #${result.data.draft.id} 생성 완료 · 기사 ${result.data.article_count}개 비교 · D1 저장 완료`);
+        showStatus(`그룹 초안 #${result.data.draft.id}을 생성해 D1에 저장했습니다.`);
+        await loadDrafts();
+      } catch (error) {
+        setGroupFeedback(error.message || "그룹 초안 생성 중 오류가 발생했습니다.", true);
+      } finally {
+        button.disabled = false;
+        button.textContent = originalText;
+      }
+    };
+
+    const deleteDraft = async (id) => {
+      if (!window.confirm("이 초안을 삭제할까요?")) return;
+      try {
+        const response = await fetch(`/api/drafts/${encodeURIComponent(id)}`, { method: "DELETE" });
+        const result = await response.json();
+        if (!response.ok || !result.success) throw new Error(result.error?.message || "초안을 삭제하지 못했습니다.");
+        if (currentDraftId === id) {
+          currentDraftId = null;
+          document.getElementById("draftSaveState").textContent = "브라우저 임시 초안";
+        }
+        setDraftFeedback("초안을 삭제했습니다.");
+        await loadDrafts();
+      } catch (error) {
+        setDraftFeedback(error.message || "초안 삭제 중 오류가 발생했습니다.", true);
+      }
+    };
+
+    const renderDrafts = (drafts) => {
+      const list = document.getElementById("draftList");
+      if (!drafts.length) {
+        const empty = document.createElement("div");
+        empty.className = "summary-box";
+        empty.textContent = "저장된 초안이 없습니다.";
+        list.replaceChildren(empty);
+        return;
+      }
+      list.replaceChildren(...drafts.map((draft) => {
+        const item = document.createElement("article");
+        item.className = "draft-item";
+        const select = document.createElement("button");
+        select.type = "button";
+        const title = document.createElement("strong");
+        title.textContent = draft.title;
+        const meta = document.createElement("span");
+        meta.className = "news-meta";
+        meta.style.marginBottom = "0";
+        meta.textContent = `#${draft.id} · ${draft.status} · ${formatArticleDate(draft.updated_at || draft.created_at)}`;
+        select.append(title, meta);
+        select.addEventListener("click", () => loadDraftIntoEditor(draft));
+        const remove = document.createElement("button");
+        remove.className = "mini-btn btn-danger";
+        remove.type = "button";
+        remove.textContent = "삭제";
+        remove.addEventListener("click", () => deleteDraft(draft.id));
+        item.append(select, remove);
+        return item;
+      }));
+    };
+
+    const loadDrafts = async () => {
+      try {
+        const response = await fetch("/api/drafts");
+        const result = await response.json();
+        if (!response.ok || !result.success) throw new Error(result.error?.message || "초안 목록을 불러오지 못했습니다.");
+        renderDrafts(result.data.drafts);
+        setDraftFeedback(`최근 초안 ${result.data.count}개를 불러왔습니다.`);
+      } catch (error) {
+        setDraftFeedback(error.message || "초안 목록 요청 중 오류가 발생했습니다.", true);
+      }
+    };
+
+    document.getElementById("loadDraftsBtn").addEventListener("click", loadDrafts);
+
     const renderGroupDetail = (group) => {
       const detail = document.getElementById("groupDetail");
       const heading = document.createElement("div");
@@ -1503,17 +1709,11 @@ ${content}
       draftButton.type = "button";
       draftButton.textContent = "이 그룹으로 블로그 초안 생성";
       draftButton.addEventListener("click", () => {
-        const usable = group.articles.filter((article) => article.summary);
-        if (!usable.length) {
-          setGroupFeedback("초안 생성에 사용할 기사 요약이 없습니다.", true);
+        if (group.articles.length < 2) {
+          setGroupFeedback("기사가 2개 이상인 그룹만 초안을 생성할 수 있습니다.", true);
           return;
         }
-        document.getElementById("articleTitle").value = group.representative_title;
-        document.getElementById("articleContent").value = usable.map((article) =>
-          `[${article.source || "출처 없음"}] ${article.title}\n${article.summary}`
-        ).join("\n\n");
-        document.getElementById("runBtn").click();
-        document.getElementById("runBtn").scrollIntoView({ behavior: "smooth", block: "center" });
+        generateGroupDraft(group.id, draftButton);
       });
       heading.append(title, draftButton);
 
@@ -1567,9 +1767,14 @@ ${content}
         return;
       }
       list.replaceChildren(...groups.map((group) => {
+        const item = document.createElement("div");
+        item.className = "group-item";
+        item.style.display = "grid";
+        item.style.gridTemplateColumns = "minmax(0, 1fr) auto";
+        item.style.gap = "10px";
         const button = document.createElement("button");
-        button.className = "group-item";
         button.type = "button";
+        button.style.cssText = "border:0;background:transparent;padding:0;color:inherit;text-align:left;";
         const title = document.createElement("strong");
         title.textContent = group.representative_title;
         const meta = document.createElement("span");
@@ -1577,8 +1782,14 @@ ${content}
         meta.style.marginBottom = "0";
         meta.textContent = `${group.article_count}건 · ${group.sources.join(", ")} · ${formatArticleDate(group.created_at)}`;
         button.append(title, meta);
-        button.addEventListener("click", () => loadGroupDetail(group.id, button));
-        return button;
+        button.addEventListener("click", () => loadGroupDetail(group.id, item));
+        const generate = document.createElement("button");
+        generate.className = "mini-btn";
+        generate.type = "button";
+        generate.textContent = "초안 생성";
+        generate.addEventListener("click", () => generateGroupDraft(group.id, generate));
+        item.append(button, generate);
+        return item;
       }));
     };
 
@@ -1617,6 +1828,8 @@ ${content}
         button.textContent = "유사 기사 그룹화";
       }
     });
+
+    loadDrafts();
 
     document.getElementById("articleSaveForm").addEventListener("submit", async (event) => {
       event.preventDefault();
