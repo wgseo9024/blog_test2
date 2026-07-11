@@ -3,7 +3,7 @@
 아래 작업은 이번 구현에서 실행하지 않았다.
 
 1. Cloudflare Pages에 `OPENAI_API_KEY`, `OPENAI_MODEL`, `AUTOMATION_TOKEN`,
-   `MANUAL_AUTOMATION_TOKEN`, `PUBLISHER_TOKEN`을 encrypted secret으로 등록한다.
+   `PUBLISHER_TOKEN`을 encrypted secret으로 등록한다.
 2. Scheduler Worker에도 Pages와 **같은** `AUTOMATION_TOKEN`을 secret으로 등록한다.
 3. 운영 D1을 백업·확인한 뒤 `0003_final_mvp.sql` migration을 적용한다.
 4. Pages와 Scheduler Worker를 배포하고 5분 Cron을 확인한다.

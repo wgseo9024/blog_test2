@@ -15,14 +15,10 @@ npx wrangler secret put AUTOMATION_TOKEN --config scheduler-worker/wrangler.json
 
 # Pages 프로젝트에도 같은 값을 secret으로 등록
 npx wrangler pages secret put AUTOMATION_TOKEN --project-name blog-test2
-
-# 브라우저의 "지금 1회 실행" 전용 별도 secret
-npx wrangler pages secret put MANUAL_AUTOMATION_TOKEN --project-name blog-test2
 ```
 
 Pages 대시보드를 사용한다면 **Workers & Pages → blog-test2 → Settings → Variables and
-Secrets**에서 `AUTOMATION_TOKEN`, `MANUAL_AUTOMATION_TOKEN`을 encrypted secret으로
-등록해도 됩니다. 두 토큰은 서로 다른 충분히 긴 무작위 값을 사용하세요.
+Secrets**에서 `AUTOMATION_TOKEN`을 encrypted secret으로 등록해도 됩니다.
 
 ## 배포
 
@@ -41,7 +37,6 @@ secret을 둡니다. `.dev.vars`는 Git에서 제외됩니다.
 ```dotenv
 # 루트 .dev.vars
 AUTOMATION_TOKEN=replace-with-a-random-secret
-MANUAL_AUTOMATION_TOKEN=replace-with-another-random-secret
 ```
 
 ```dotenv
@@ -78,9 +73,8 @@ curl -X POST 'http://localhost:8788/api/automation/run' \
   -H 'Content-Type: application/json' \
   -d '{"force":false}'
 
-# 수동 실행용 엔드포인트: MANUAL_AUTOMATION_TOKEN 필요
-curl -X POST 'http://localhost:8788/api/automation/manual-run' \
-  -H 'X-Manual-Automation-Token: replace-with-another-random-secret'
+# 화면의 "지금 1회 실행"과 같은 수동 실행 엔드포인트
+curl -X POST 'http://localhost:8788/api/automation/manual-run'
 ```
 
 API 호출이 실패하면 Worker는 `last_run_at`을 변경하지 않고 `next_run_at`을 실행 시각의
