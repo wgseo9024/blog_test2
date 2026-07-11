@@ -7,7 +7,7 @@ const responseData = async (response) => {
   try { return await response.json(); } catch { return null; }
 };
 
-export async function onRequestPost({ env }) {
+export async function executeAutomation({ env }) {
   const errors = [];
   let collected = 0;
   let groupsCreated = 0;
@@ -99,6 +99,31 @@ export async function onRequestPost({ env }) {
     collected, groups_created: groupsCreated, drafts_created: draftsCreated,
     remaining_daily_limit: remaining, errors,
   } });
+}
+
+const bearerToken = (request) => {
+  const match = request.headers.get("Authorization")?.match(/^Bearer\s+(.+)$/i);
+  return match?.[1] || "";
+};
+
+const tokensMatch = (provided, expected) => {
+  if (!provided || !expected || provided.length !== expected.length) return false;
+  let difference = 0;
+  for (let index = 0; index < provided.length; index += 1) {
+    difference |= provided.charCodeAt(index) ^ expected.charCodeAt(index);
+  }
+  return difference === 0;
+};
+
+export async function onRequestPost({ request, env }) {
+  if (!env.AUTOMATION_TOKEN) {
+    console.error("AUTOMATION_TOKEN is not configured");
+    return failure("자동화 호출 인증이 설정되지 않았습니다.", 503);
+  }
+  if (!tokensMatch(bearerToken(request), env.AUTOMATION_TOKEN)) {
+    return failure("자동화 호출 권한이 없습니다.", 401, { "WWW-Authenticate": "Bearer" });
+  }
+  return executeAutomation({ env });
 }
 
 export function onRequest(context) {

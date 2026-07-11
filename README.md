@@ -245,8 +245,15 @@ curl -X PUT 'http://localhost:8788/api/automation/settings' \
 # 한국 시간 기준 오늘 통계
 curl 'http://localhost:8788/api/automation/stats'
 
-# 수집 → 그룹화 → 남은 일일 한도만큼 초안 생성 1회 실행
-curl -X POST 'http://localhost:8788/api/automation/run'
+# 예약 실행용 API (Pages와 Scheduler Worker에 같은 AUTOMATION_TOKEN 설정)
+curl -X POST 'http://localhost:8788/api/automation/run' \
+  -H 'Authorization: Bearer replace-with-automation-token' \
+  -H 'Content-Type: application/json' \
+  -d '{"force":false}'
+
+# 브라우저 버튼과 같은 수동 실행용 API (별도 MANUAL_AUTOMATION_TOKEN 설정)
+curl -X POST 'http://localhost:8788/api/automation/manual-run' \
+  -H 'X-Manual-Automation-Token: replace-with-manual-token'
 ```
 
 `mode`는 `draft`, `review`, `publish`를 받습니다. `publish`도 실제 네이버 발행을
@@ -255,11 +262,15 @@ curl -X POST 'http://localhost:8788/api/automation/run'
 HTTP 재호출이나 API 재귀가 없습니다. 한 단계가 실패해도 다음 단계를 가능한 범위에서
 진행하고 응답의 `errors` 배열에 안전한 요약을 반환합니다.
 
+Cron Worker의 secret 설정, 배포, scheduled 테스트 방법은
+[`scheduler-worker/README.md`](scheduler-worker/README.md)를 참고하세요. 예약 실행 API는
+Bearer 토큰만 허용하고, 화면의 **지금 1회 실행** 버튼은 매번 별도 수동 실행 토큰을
+입력받습니다. 어느 토큰도 HTML이나 저장소에 보관하지 않습니다.
+
 ### 현재 한계
 
-- Cloudflare Pages Functions만으로는 저장된 간격에 맞춘 반복 실행이 시작되지 않습니다.
-  실제 반복 스케줄 실행에는 별도 **Cloudflare Cron Worker**가 필요하며, Cron Worker가
-  실행 시각과 운영 시간대를 확인한 뒤 동일한 자동화 실행 로직을 호출하도록 연결해야 합니다.
+- 반복 실행은 `blog-test2-scheduler` Worker가 담당하므로 Pages와 Worker를 각각 배포하고
+  동일한 D1 및 `AUTOMATION_TOKEN`을 연결해야 합니다.
 - 네이버 자동 발행 연동은 구현되어 있지 않습니다. `publish` 방식은 발행 대기열 등록까지만
   수행합니다.
 - RSS 제공처의 차단, 피드 형식 변경 또는 OpenAI 사용량 제한으로 일부 단계가 실패할 수
