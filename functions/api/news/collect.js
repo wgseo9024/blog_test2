@@ -1,3 +1,5 @@
+import { scoreAdvertisement } from "../../lib/advertisement.js";
+
 const SOURCES = [
   { id: "sports-khan", name: "스포츠경향 연예", url: "https://sports.khan.co.kr/rss/entertainment" },
   { id: "mydaily", name: "마이데일리 스타", url: "https://mydaily.co.kr/star_rss.xml" },
@@ -5,7 +7,7 @@ const SOURCES = [
   { id: "mbn", name: "MBN 연예", url: "https://www.mbn.co.kr/rss/enter/" },
 ];
 
-const FEED_LIMIT = 30;
+const FEED_LIMIT = 5;
 const REQUEST_TIMEOUT_MS = 10000;
 const USER_AGENT = "BlogNewsCollector/1.0 (+Cloudflare Pages; RSS reader)";
 
@@ -163,6 +165,7 @@ const collectSource = async (env, source) => {
   try {
     const xml = await fetchFeed(source);
     try {
+      const ad = scoreAdvertisement(article);
       articles = parseFeed(xml, source);
     } catch {
       const type = "xml_parse";
@@ -189,10 +192,12 @@ const collectSource = async (env, source) => {
         continue;
       }
       const inserted = await env.DB.prepare(`INSERT INTO articles
-        (title, url, source, summary, content, published_at, image_url)
-        VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`)
+        (title, url, source, summary, content, published_at, image_url,
+         is_advertisement, advertisement_score, advertisement_reasons)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`)
         .bind(article.title, article.url, article.source, article.summary || null,
-          article.content || null, article.published_at || null, article.image_url || null)
+          article.content || null, article.published_at || null, article.image_url || null,
+          ad.isAdvertisement ? 1 : 0, ad.score, JSON.stringify(ad.reasons))
         .first();
       if (inserted?.id && article.image_url && /^https?:\/\//i.test(article.image_url)) {
         await env.DB.prepare(`INSERT OR IGNORE INTO article_images

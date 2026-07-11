@@ -19,6 +19,14 @@ Chrome에서 수행하며 기본 동작도 임시저장까지만입니다.
 `docs/MANUAL_STEPS.md`, 구현 기준선과 호환성 판단은 `docs/FINAL_IMPLEMENTATION_PLAN.md`를
 참고하세요.
 
+2026-07-11에 추가된 광고 점수, 3단계 AI 검증, 구조화 초안, 권리 승인 이미지 처리의 감사 결과는
+`docs/NON_DUPLICATE_GAP_REPORT.md`, 사용자가 직접 해야 하는 R2/Windows 설정은
+`docs/IMAGE_PIPELINE_SETUP.md`를 참고하세요. 기존 migration은 수정하지 않았으며 신규 변경은
+`migrations/0004_editorial_validation_images.sql`에만 들어 있습니다.
+
+Windows에서 승인된 초안을 5분 간격으로 임시저장 처리하려면 `publisher-app`의 `.env`에
+`AUTO_SAVE_DRAFT=YES`, `NAVER_BLOG_CATEGORY`를 설정하고 `npm run watch`를 실행합니다.
+
 ## D1 기사 API
 
 다음 Pages Functions가 `DB` D1 binding의 `articles` 테이블을 사용합니다.

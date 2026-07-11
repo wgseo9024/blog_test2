@@ -1,3 +1,5 @@
+import { renderDraft, validateWriterOutput } from "../../lib/draft-validation.js";
+
 const json = (data, status = 200, headers = {}) => Response.json(data, {
   status,
   headers: { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", ...headers },
@@ -11,12 +13,11 @@ const clean = (value, maxLength) => typeof value === "string" ? value.trim().sli
 const ALLOWED_STATUSES = new Set(["draft", "review", "queued", "published", "failed"]);
 const ALLOWED_IMAGE_MODES = new Set(["none", "candidate", "generate"]);
 const parseDraft = (draft) => {
-  try { return { ...draft, tags: JSON.parse(draft.tags || "[]") }; }
+  try { return { ...draft, tags: JSON.parse(draft.tags_json || draft.tags || "[]"), bodyBlocks: JSON.parse(draft.body_blocks_json || "[]"), validationIssues: JSON.parse(draft.validation_issues_json || "[]") }; }
   catch { return { ...draft, tags: [] }; }
 };
 
-const findDraft = (env, id) => env.DB.prepare(`SELECT id, article_group_id, title, content, tags,
-  status, image_mode, created_at, updated_at FROM drafts WHERE id = ? LIMIT 1`).bind(id).first();
+const findDraft = (env, id) => env.DB.prepare(`SELECT * FROM drafts WHERE id = ? LIMIT 1`).bind(id).first();
 
 export async function onRequestGet({ env, params }) {
   const id = validId(params.id);
@@ -41,7 +42,8 @@ export async function onRequestPut({ request, env, params }) {
   const hasStatus = Object.prototype.hasOwnProperty.call(input || {}, "status");
   const hasTags = Object.prototype.hasOwnProperty.call(input || {}, "tags");
   const hasImageMode = Object.prototype.hasOwnProperty.call(input || {}, "image_mode");
-  if (![hasTitle, hasContent, hasStatus, hasTags, hasImageMode].some(Boolean)) {
+  const hasBlocks = Object.prototype.hasOwnProperty.call(input || {}, "bodyBlocks");
+  if (![hasTitle, hasContent, hasStatus, hasTags, hasImageMode,hasBlocks].some(Boolean)) {
     return failure("수정할 제목, 본문, 태그 또는 상태를 입력해 주세요.", 400);
   }
   const title = hasTitle ? clean(input.title, 500) : null;
@@ -51,6 +53,7 @@ export async function onRequestPut({ request, env, params }) {
   const tags = hasTags && Array.isArray(input.tags)
     ? input.tags.map((tag) => clean(tag, 100).replace(/^#+/, "")).filter(Boolean)
     : null;
+  const blocks = hasBlocks && Array.isArray(input.bodyBlocks) ? input.bodyBlocks.map((v)=>clean(v,5000)) : null;
   if ((hasTitle && !title) || (hasContent && !content) || (hasStatus && !status) || (hasTags && !tags)) {
     return failure("제목과 본문은 비워 둘 수 없고, 태그는 배열이어야 합니다.", 400);
   }
@@ -62,14 +65,16 @@ export async function onRequestPut({ request, env, params }) {
     const existing = await findDraft(env, id);
     if (!existing) return failure("초안을 찾을 수 없습니다.", 404);
     const nextTitle = hasTitle ? title : existing.title;
-    const nextContent = hasContent ? content : existing.content;
     const nextTags = hasTags ? tags : parseDraft(existing).tags;
+    const nextBlocks = hasBlocks ? blocks : parseDraft(existing).bodyBlocks;
+    if ((hasBlocks || hasTags) && !validateWriterOutput({bodyBlocks:nextBlocks,tags:nextTags}).valid) return failure("bodyBlocks 6개·본문 700~800자·중복 없는 태그 10개·# 금지 조건을 확인해 주세요.",422);
+    const nextContent = (hasBlocks || hasTags) ? renderDraft(nextBlocks,nextTags) : (hasContent ? content : existing.content);
     const nextStatus = hasStatus ? status : existing.status;
     const nextImageMode = hasImageMode ? imageMode : (existing.image_mode || "none");
-    const draft = await env.DB.prepare(`UPDATE drafts SET title = ?, content = ?, tags = ?, status = ?, image_mode = ?,
+    const draft = await env.DB.prepare(`UPDATE drafts SET title = ?, content = ?, tags = ?, tags_json=?, body_blocks_json=?, rendered_content=?, status = ?, image_mode = ?,
       updated_at = CURRENT_TIMESTAMP WHERE id = ? RETURNING id, article_group_id, title, content,
-      tags, status, image_mode, created_at, updated_at`).bind(
-        nextTitle, nextContent, JSON.stringify(nextTags), nextStatus, nextImageMode, id,
+      tags,tags_json,body_blocks_json,rendered_content,status, image_mode,validation_status,validation_issues_json, created_at, updated_at`).bind(
+        nextTitle, nextContent, JSON.stringify(nextTags),JSON.stringify(nextTags),JSON.stringify(nextBlocks),nextContent, nextStatus, nextImageMode, id,
       ).first();
     return json({ success: true, data: { draft: parseDraft(draft) } });
   } catch (error) {

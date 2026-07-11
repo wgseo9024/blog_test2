@@ -31,7 +31,10 @@ export async function onRequestGet({ env, params }) {
     const articles = results || [];
     if (articles.length) {
       const placeholders = articles.map(() => "?").join(",");
-      const imageRows = await env.DB.prepare(`SELECT article_id, image_url, source, article_url, candidate_type
+      const imageRows = await env.DB.prepare(`SELECT id,article_id,image_url,source,article_url,candidate_type,
+        width,height,size_bytes,sha256,perceptual_hash,duplicate_of,exclude_reason,rights_status,
+        rights_confirmed,approved_for_use,sort_order,crop_percent,crop_pixels,processing_status,
+        processing_error,original_r2_key,processed_r2_key
         FROM article_images WHERE article_id IN (${placeholders}) ORDER BY id`).bind(...articles.map((article) => article.id)).all();
       const images = new Map();
       for (const candidate of imageRows.results || []) {

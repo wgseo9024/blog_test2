@@ -1,9 +1,11 @@
 import { chromium } from "playwright";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { editorSelectors, firstVisible } from "./naver-selectors.js";
+import { hammingDistance, inspectAndProcess, MAX_IMAGE_BYTES, normalizeImageUrl } from "./image-processing.js";
 
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const profileDir = path.join(appDir, ".session", "naver-profile");
@@ -35,6 +37,8 @@ const writeUrl = process.env.NAVER_BLOG_WRITE_URL || "https://blog.naver.com/GoB
 const headless = String(process.env.HEADLESS || "false").toLowerCase() === "true";
 const stamp = () => new Date().toISOString().replace(/[:.]/g, "-");
 const logPath = path.join(logDir, `publisher-${stamp()}.log`);
+const categoryName = process.env.NAVER_BLOG_CATEGORY || "";
+const unattended = process.env.AUTO_SAVE_DRAFT === "YES";
 
 async function log(message, level = "info") {
   const safe = String(message).replaceAll(token, token ? "[REDACTED]" : "");
@@ -53,6 +57,40 @@ const api = async (apiPath, options = {}) => {
   if (!response.ok || body.success === false) throw new Error(body.error?.message || `API HTTP ${response.status}`);
   return body.data;
 };
+
+const apiForm = async (apiPath, form) => {
+  const response = await fetch(new URL(apiPath,baseUrl),{method:"POST",headers:{Authorization:`Bearer ${token}`},body:form});
+  const body=await response.json();if(!response.ok||body.success===false)throw new Error(body.error?.message||`API HTTP ${response.status}`);return body.data;
+};
+
+async function prepareImages(draft) {
+  const prepared=[];
+  const urls=new Map(),hashes=new Map(),perceptual=[];
+  for(const image of (draft.images||[]).slice(0,4)) {
+    const normalized=normalizeImageUrl(image.image_url,true);if(urls.has(normalized)){await api(`/api/publisher/images/${image.id}`,{method:"PUT",body:JSON.stringify({duplicate_of:urls.get(normalized),exclude_reason:"normalized_url_duplicate",processing_status:"excluded"})});continue;}urls.set(normalized,image.id);
+    const response=await fetch(image.image_url,{headers:{Accept:"image/jpeg,image/png,image/webp"}});
+    const type=String(response.headers.get("content-type")||"").split(";")[0].toLowerCase();
+    const announced=Number(response.headers.get("content-length")||0);
+    if(!response.ok||!["image/jpeg","image/png","image/webp"].includes(type)||announced>MAX_IMAGE_BYTES)throw new Error(`IMAGE_DOWNLOAD_REJECTED:${image.id}`);
+    const original=Buffer.from(await response.arrayBuffer());
+    const result=await inspectAndProcess(original,{approvedForUse:true});
+    const duplicateId=hashes.get(result.sha256)||perceptual.find((item)=>hammingDistance(item.hash,result.perceptualHash)<=5)?.id;if(duplicateId){await api(`/api/publisher/images/${image.id}`,{method:"PUT",body:JSON.stringify({sha256:result.sha256,perceptual_hash:result.perceptualHash,duplicate_of:duplicateId,exclude_reason:hashes.has(result.sha256)?"sha256_duplicate":"perceptual_hash_duplicate",processing_status:"excluded"})});continue;}hashes.set(result.sha256,image.id);perceptual.push({id:image.id,hash:result.perceptualHash});
+    const form=new FormData();form.set("original",new Blob([original],{type}),`original-${image.id}`);form.set("processed",new Blob([result.processed],{type:"image/jpeg"}),`processed-${image.id}.jpg`);form.set("metadata",JSON.stringify({width:result.width,height:result.height,cropPixels:result.cropPixels,cropPercent:result.cropPercent,sha256:result.sha256,perceptualHash:result.perceptualHash}));
+    await apiForm(`/api/publisher/images/${image.id}`,form);
+    const filePath=path.join(artifactDir,`upload-${draft.id}-${image.id}.jpg`);await writeFile(filePath,result.processed);prepared.push({id:image.id,filePath});
+  }
+  return prepared;
+}
+
+async function selectCategory(page) {
+  if(!categoryName)return;
+  const button=(await firstVisible(page,editorSelectors.category))?.locator;if(!button)throw new Error("네이버 카테고리 선택기를 찾지 못했습니다.");
+  await button.click();const option=page.getByText(categoryName,{exact:true}).first();if(!await option.isVisible().catch(()=>false))throw new Error(`설정한 네이버 카테고리를 찾지 못했습니다: ${categoryName}`);await option.click();
+}
+
+async function uploadImages(page,prepared) {
+  for(const image of prepared){const button=(await firstVisible(page,editorSelectors.image))?.locator;if(!button)throw new Error("네이버 이미지 버튼을 찾지 못했습니다.");const chooser=page.waitForEvent("filechooser",{timeout:10000});await button.click();(await chooser).setFiles(image.filePath);await page.waitForTimeout(1500);}
+}
 
 async function queuedDrafts() {
   const queue = await api("/api/publisher/queued");
@@ -92,31 +130,12 @@ async function saveFailureArtifacts(page, prefix) {
   await log(`진단 파일 저장: ${screenshot}, ${htmlPath}`, "error");
 }
 
-const titleSelectors = [
-  '[contenteditable="true"][data-placeholder*="제목"]',
-  '.se-title-text [contenteditable="true"]',
-  '.se-title-text',
-];
-const bodySelectors = [
-  '.se-component-content [contenteditable="true"]',
-  '[contenteditable="true"][data-placeholder*="본문"]',
-  '.se-text-paragraph',
-];
-
-async function firstVisible(page, selectors) {
-  for (const selector of selectors) {
-    const locator = page.locator(selector).first();
-    if (await locator.isVisible().catch(() => false)) return { locator, selector };
-  }
-  return null;
-}
-
 async function inspectEditor(page) {
   await page.goto(writeUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
   await page.waitForTimeout(2500);
   await stopWarning(page);
-  const title = await firstVisible(page, titleSelectors);
-  const body = await firstVisible(page, bodySelectors);
+  const title = await firstVisible(page, editorSelectors.title);
+  const body = await firstVisible(page, editorSelectors.body);
   await log(`제목 필드: ${title ? `성공 (${title.selector})` : "실패"}`);
   await log(`본문 필드: ${body ? `성공 (${body.selector})` : "실패"}`);
   if (!title || !body) throw new Error("네이버 글쓰기 입력 필드를 안전하게 확인하지 못했습니다.");
@@ -154,9 +173,8 @@ try {
   await log(token ? "PUBLISHER_TOKEN 설정 여부: 있음" : "PUBLISHER_TOKEN 설정 여부: 없음");
   const drafts = await queuedDrafts();
   if (!drafts.length) { await context.close(); process.exit(0); }
-  await waitForLogin(page);
-
   if (mode === "dry-run") {
+    await waitForLogin(page);
     try { await inspectEditor(page); await log("Dry Run 성공: 입력이나 저장, 발행은 수행하지 않았습니다."); }
     catch (error) { await saveFailureArtifacts(page, "dry-run-failed"); throw error; }
     await context.close();
@@ -167,7 +185,7 @@ try {
     if (!args.has("--publish") || process.env.PUBLISH_CONFIRM !== "YES") {
       throw new Error("공개 발행 보호 조건이 충족되지 않았습니다. 아무 작업도 수행하지 않습니다.");
     }
-  } else {
+  } else if (!unattended) {
     const rl = createInterface({ input, output });
     const answer = await rl.question('계속하려면 정확히 "임시저장 테스트 진행"을 입력하세요: ');
     rl.close();
@@ -180,9 +198,16 @@ try {
   const draft = lease.draft;
   let resultSent = false;
   try {
+    await page.goto("https://blog.naver.com/",{waitUntil:"domcontentloaded",timeout:30000});
+    const signals=await loginSignals(page);if(!signals.passed){await api("/api/publisher/result",{method:"POST",body:JSON.stringify({draft_id:draft.id,lease_token:lease.lease_token,result:"login_required",message:"로그인이 만료되었습니다. npm run login-check로 재로그인하세요."})});resultSent=true;throw new Error("LOGIN_REQUIRED: npm run login-check로 직접 재로그인하세요.");}
     const editor = await inspectEditor(page);
+    const prepared=await prepareImages(draft);
     await editor.title.locator.fill(draft.title);
-    await editor.body.locator.fill(`${draft.content}\n\n${(draft.tags || []).map((tag) => `#${tag}`).join(" ")}`.trim());
+    const bodyBlocks = Array.isArray(draft.bodyBlocks) && draft.bodyBlocks.length === 6 ? draft.bodyBlocks : [draft.content];
+    await editor.body.locator.fill("");
+    for(let index=0;index<bodyBlocks.length;index++){if(index<prepared.length)await uploadImages(page,[prepared[index]]);await editor.body.locator.press("End");await editor.body.locator.pressSequentially(`${bodyBlocks[index]}\n\n`);}
+    await editor.body.locator.pressSequentially((draft.tags||[]).map((tag)=>`#${tag}`).join(" "));
+    await selectCategory(page);
     await stopWarning(page);
 
     if (mode === "publish") {
@@ -202,7 +227,7 @@ try {
       resultSent = true;
       await log(`초안 #${draft.id} 공개 발행 성공을 기록했습니다.`);
     } else {
-      const saveButton = page.getByRole("button", { name: /임시저장/ }).first();
+      const saveButton = (await firstVisible(page, editorSelectors.temporarySave))?.locator;
       if (!await saveButton.isVisible().catch(() => false)) throw new Error("임시저장 버튼을 확인하지 못했습니다.");
       await saveButton.click({ timeout: 10000 });
       const confirmation = page.getByText(/임시저장.*(완료|저장)|저장되었습니다/i).first();
@@ -210,12 +235,11 @@ try {
       const buttonUsable = await saveButton.isEnabled().catch(() => false);
       if (!messageVisible || !buttonUsable) throw new Error("두 가지 신호로 임시저장 성공을 확인하지 못했습니다.");
       await api("/api/publisher/result", { method: "POST", body: JSON.stringify({ draft_id: draft.id,
-        lease_token: lease.lease_token, result: "released", message: "네이버 임시저장 완료" }) });
+        lease_token: lease.lease_token, result: "released", message: "네이버 임시저장 완료",result_url:page.url() }) });
       resultSent = true;
       await log(`초안 #${draft.id} 임시저장 성공을 기록했습니다. 공개 발행은 하지 않았습니다.`);
-      const rl = createInterface({ input, output });
-      await rl.question("브라우저에서 임시저장 글을 확인한 뒤 Enter를 누르세요: ");
-      rl.close();
+      if(!unattended){const rl=createInterface({input,output});await rl.question("브라우저에서 임시저장 글을 확인한 뒤 Enter를 누르세요: ");rl.close();}
+      await Promise.all((prepared||[]).map((image)=>rm(image.filePath,{force:true})));
     }
   } catch (error) {
     await saveFailureArtifacts(page, mode === "publish" ? "publish-failed" : "save-draft-failed");
