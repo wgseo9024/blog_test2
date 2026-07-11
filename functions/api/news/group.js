@@ -169,7 +169,6 @@ const saveGroup = async (env, members) => {
   const existingCombination = await env.DB.prepare(
     "SELECT id FROM article_groups WHERE topic_key = ? LIMIT 1",
   ).bind(topicKey).first();
-  if (existingCombination) return { created: false, groupedIds: [] };
 
   const placeholders = ids.map(() => "?").join(",");
   const alreadyGrouped = await env.DB.prepare(
@@ -178,7 +177,7 @@ const saveGroup = async (env, members) => {
   if (alreadyGrouped) return { created: false, groupedIds: [] };
 
   const representative = members[0].article.title;
-  const inserted = await env.DB.prepare(
+  const inserted = existingCombination || await env.DB.prepare(
     "INSERT OR IGNORE INTO article_groups (topic_key, representative_title) VALUES (?, ?) RETURNING id",
   ).bind(topicKey, representative).first();
   if (!inserted?.id) return { created: false, groupedIds: [] };

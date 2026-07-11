@@ -21,9 +21,16 @@ export async function onRequestPost({request,env,params}) {
     const value=await response(env,"draft_body_only",`${WRITER_PROMPT} 기존 제목은 유지하고 본문과 태그만 다시 작성하라.`,{articles,facts,title:current.title},schemas.writer);
     current={title:current.title,bodyBlocks:value.bodyBlocks,tags:value.tags};
   }
-  const local=validateWriterOutput(current);
-  const ai=await response(env,"draft_revalidator",VALIDATOR_PROMPT,{articles,facts,draft:current,localIssues:local.issues},schemas.validator);
-  const issues=[...local.issues,...(ai.valid?[]:ai.issues)];
+  let local=validateWriterOutput(current);
+  let ai=await response(env,"draft_revalidator",VALIDATOR_PROMPT,{articles,facts,draft:current,localIssues:local.issues},schemas.validator);
+  let issues=[...local.issues,...(ai.valid?[]:ai.issues)];
+  if(body.action==="regenerate_body"&&issues.length){
+    const value=await response(env,"draft_body_revision",`${WRITER_PROMPT}\n다음 검수 문제만 바로잡아 본문과 태그를 한 번 수정하라. 기존 제목은 유지하라.`,{articles,facts,title:current.title,previousDraft:current,issues},schemas.writer);
+    current={title:current.title,bodyBlocks:value.bodyBlocks,tags:value.tags};
+    local=validateWriterOutput(current);
+    ai=await response(env,"draft_revalidator_retry",VALIDATOR_PROMPT,{articles,facts,draft:current,localIssues:local.issues},schemas.validator);
+    issues=[...local.issues,...(ai.valid?[]:ai.issues)];
+  }
   const validationStatus=issues.length?"review_required":"passed";
   const status=issues.length?"review":draft.status;
   const rendered=renderDraft(local.bodyBlocks,local.tags);
