@@ -6,3 +6,5 @@ publisher-app/.session/
 publisher-app/artifacts/
 publisher-app/.env*
 publisher-app/*.log
+
+backups/
