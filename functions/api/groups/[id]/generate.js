@@ -62,8 +62,8 @@ const classifyOpenAIError = (response, result) => {
   return { code: "OPENAI_API_ERROR", message: "OpenAI에서 초안을 생성하지 못했습니다. 잠시 후 다시 시도해 주세요." };
 };
 
-export async function onRequestPost({ env, params }) {
-  const groupId = validId(params.id);
+export async function generateGroupDraft(env, rawGroupId, options = {}) {
+  const groupId = validId(rawGroupId);
   if (!groupId) return failure("올바른 그룹 id가 아닙니다.", 400, "INVALID_GROUP_ID");
   if (!env.OPENAI_API_KEY) return failure("초안 생성 서비스 설정을 확인해 주세요.", 500, "OPENAI_CONFIG_ERROR");
   if (!env.OPENAI_MODEL) return failure("초안 생성 모델 설정을 확인해 주세요.", 500, "OPENAI_MODEL_ERROR");
@@ -75,6 +75,13 @@ export async function onRequestPost({ env, params }) {
       "SELECT id, representative_title FROM article_groups WHERE id = ? LIMIT 1",
     ).bind(groupId).first();
     if (!group) return failure("이슈 그룹을 찾을 수 없습니다.", 404, "GROUP_NOT_FOUND");
+
+    if (options.preventDuplicate) {
+      const existing = await env.DB.prepare(
+        "SELECT id FROM drafts WHERE article_group_id = ? LIMIT 1",
+      ).bind(groupId).first();
+      if (existing) return failure("이미 초안이 생성된 이슈 그룹입니다.", 409, "DRAFT_EXISTS");
+    }
 
     const query = await env.DB.prepare(`SELECT a.id, a.title, a.source, a.summary, a.content,
       a.published_at
@@ -157,10 +164,28 @@ export async function onRequestPost({ env, params }) {
       : [];
     if (!title || !content || tags.length !== 10) throw new Error("Invalid structured output");
 
-    draft = await env.DB.prepare(`INSERT INTO drafts (article_group_id, title, content, tags)
-      VALUES (?, ?, ?, ?)
-      RETURNING id, article_group_id, title, content, tags, status, created_at, updated_at`)
-      .bind(groupId, title, content, JSON.stringify(tags)).first();
+    const status = ["draft", "review", "queued"].includes(options.status) ? options.status : "draft";
+    if (options.preventDuplicate) {
+      const existing = await env.DB.prepare(
+        "SELECT id FROM drafts WHERE article_group_id = ? LIMIT 1",
+      ).bind(groupId).first();
+      if (existing) return failure("이미 초안이 생성된 이슈 그룹입니다.", 409, "DRAFT_EXISTS");
+    }
+    const insertSql = options.preventDuplicate
+      ? `INSERT INTO drafts (article_group_id, title, content, tags, status)
+        SELECT ?, ?, ?, ?, ? WHERE NOT EXISTS
+          (SELECT 1 FROM drafts WHERE article_group_id = ?)
+        RETURNING id, article_group_id, title, content, tags, status, created_at, updated_at`
+      : `INSERT INTO drafts (article_group_id, title, content, tags, status)
+        VALUES (?, ?, ?, ?, ?)
+        RETURNING id, article_group_id, title, content, tags, status, created_at, updated_at`;
+    const statement = env.DB.prepare(insertSql);
+    draft = options.preventDuplicate
+      ? await statement.bind(groupId, title, content, JSON.stringify(tags), status, groupId).first()
+      : await statement.bind(groupId, title, content, JSON.stringify(tags), status).first();
+    if (!draft && options.preventDuplicate) {
+      return failure("이미 초안이 생성된 이슈 그룹입니다.", 409, "DRAFT_EXISTS");
+    }
     draft.tags = tags;
   } catch (error) {
     console.error("Draft output or save error", error);
@@ -168,6 +193,10 @@ export async function onRequestPost({ env, params }) {
   }
 
   return success({ draft, article_count: selected.length }, 201);
+}
+
+export async function onRequestPost({ env, params }) {
+  return generateGroupDraft(env, params.id);
 }
 
 export function onRequest(context) {

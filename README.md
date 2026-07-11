@@ -213,3 +213,56 @@ curl -X DELETE 'http://localhost:8788/api/drafts/7'
 수 있습니다. 완료된 초안은 기존 제목·본문·태그 편집기에 표시되며, **저장된 블로그
 초안** 목록에서도 다시 불러올 수 있습니다. 저장된 초안을 편집한 뒤 상단 **임시 저장**
 버튼을 누르면 제목, 본문, 태그, 상태가 D1에 반영됩니다.
+
+## 자동화 대시보드 적용
+
+기존 `0001_init.sql`은 그대로 두고 다음 migration을 적용합니다.
+
+```bash
+# 로컬 D1
+npx wrangler d1 migrations apply blog-news-db --local
+
+# 운영 D1 (적용 전 대상 DB를 한 번 더 확인하세요)
+npx wrangler d1 migrations apply blog-news-db --remote
+```
+
+`0002_automation_settings.sql`은 단일 설정 행(`id = 1`)을 갖는
+`automation_settings`와 실행 이력을 기록하는 `publish_logs`를 만듭니다. Cloudflare
+Pages의 D1 binding 이름은 기존과 동일한 `DB`입니다. 하루 처리량은 화면과 서버 모두
+1~30개로 제한되며 실행 간격은 10, 30, 60, 120, 180, 360분만 허용합니다.
+
+### 자동화 API 테스트
+
+```bash
+# 설정 조회
+curl 'http://localhost:8788/api/automation/settings'
+
+# 설정 저장
+curl -X PUT 'http://localhost:8788/api/automation/settings' \
+  -H 'Content-Type: application/json' \
+  -d '{"enabled":true,"mode":"review","interval_minutes":30,"daily_limit":3,"start_time":"09:00","end_time":"22:00","timezone":"Asia/Seoul"}'
+
+# 한국 시간 기준 오늘 통계
+curl 'http://localhost:8788/api/automation/stats'
+
+# 수집 → 그룹화 → 남은 일일 한도만큼 초안 생성 1회 실행
+curl -X POST 'http://localhost:8788/api/automation/run'
+```
+
+`mode`는 `draft`, `review`, `publish`를 받습니다. `publish`도 실제 네이버 발행을
+수행하지 않으며 초안을 `queued` 상태로 저장하고 `publish_logs`에 `queued` 이력을
+남깁니다. 수동 1회 실행은 기존 수집·그룹화 로직을 함수로 직접 재사용하므로 내부
+HTTP 재호출이나 API 재귀가 없습니다. 한 단계가 실패해도 다음 단계를 가능한 범위에서
+진행하고 응답의 `errors` 배열에 안전한 요약을 반환합니다.
+
+### 현재 한계
+
+- Cloudflare Pages Functions만으로는 저장된 간격에 맞춘 반복 실행이 시작되지 않습니다.
+  실제 반복 스케줄 실행에는 별도 **Cloudflare Cron Worker**가 필요하며, Cron Worker가
+  실행 시각과 운영 시간대를 확인한 뒤 동일한 자동화 실행 로직을 호출하도록 연결해야 합니다.
+- 네이버 자동 발행 연동은 구현되어 있지 않습니다. `publish` 방식은 발행 대기열 등록까지만
+  수행합니다.
+- RSS 제공처의 차단, 피드 형식 변경 또는 OpenAI 사용량 제한으로 일부 단계가 실패할 수
+  있습니다. 이 경우 다른 단계의 결과와 오류 요약은 함께 반환됩니다.
+- 기사 원문은 RSS에 제공된 범위에서 초안 작성의 근거로만 사용하며, 전체 원문을 그대로
+  복제해 발행하지 않습니다.
