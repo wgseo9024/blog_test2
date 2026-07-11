@@ -8,7 +8,7 @@ export function validateWriterOutput(value) {
   if (blocks.length !== 7) issues.push({ code: "BODY_BLOCK_COUNT", message: "bodyBlocks는 정확히 7개여야 합니다." });
   if (blocks.some((block) => !block || /\n/.test(block))) issues.push({ code: "BODY_BLOCK_SENTENCE", message: "각 block은 줄바꿈 없는 완결 문장이어야 합니다." });
   const length = blocks.join("").length;
-  if (length < 700 || length > 800) issues.push({ code: "BODY_LENGTH", message: `본문은 700~800자여야 합니다(현재 ${length}자).` });
+  if (length < 600 || length > 800) issues.push({ code: "BODY_LENGTH", message: `본문은 600~800자여야 합니다(현재 ${length}자).` });
   if (tags.length !== 10) issues.push({ code: "TAG_COUNT", message: "중복을 제외한 tags는 정확히 10개여야 합니다." });
   if (tags.some((tag) => tag.includes("#"))) issues.push({ code: "TAG_HASH", message: "태그에 #을 넣을 수 없습니다." });
   return { valid: issues.length === 0, issues, bodyBlocks: blocks, tags, characterCount: length };

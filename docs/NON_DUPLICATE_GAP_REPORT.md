@@ -10,7 +10,7 @@
 | OpenAI Responses API와 기존 Secret | ALREADY_IMPLEMENTED | 기존 fetch 래퍼 방식과 `OPENAI_MODEL` 유지; **SKIPPED_ALREADY_IMPLEMENTED** |
 | 광고 점수와 관리자 가시성 | MISSING | 점수·사유 컬럼, 수집 시 계산, 생성 제외 구현. 기사 API/DB에서는 확인 가능하며 전용 필터 UI는 남음 |
 | Fact→Writer→Validator, 1회 수정 | MISSING | 그룹 generate 내부에 구현. 2차 실패는 `review` + `review_required` |
-| 7 blocks/700~800자/태그 10개 | PARTIALLY_IMPLEMENTED | 기존 단일 content/태그 10개에서 구조화 검증·저장·렌더링으로 확장 |
+| 7 blocks/600~800자/태그 10개 | PARTIALLY_IMPLEMENTED | 기존 단일 content/태그 10개에서 구조화 검증·저장·렌더링으로 확장 |
 | 초안 신규 메타데이터 | MISSING | `0004`에만 추가, 기존 `content`, `tags` 유지 |
 | 이미지 URL 후보 수집 | ALREADY_IMPLEMENTED | `article_images`, RSS/OG 후보; **SKIPPED_ALREADY_IMPLEMENTED** |
 | 이미지 메타·중복·품질 검사 | MISSING | 스키마와 로컬 SHA-256/dHash/크기·치수 검사 구현. 후보 전체를 사전 스캔하는 배치 실행은 남음 |

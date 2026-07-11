@@ -67,7 +67,7 @@ export async function onRequestPut({ request, env, params }) {
     const nextTitle = hasTitle ? title : existing.title;
     const nextTags = hasTags ? tags : parseDraft(existing).tags;
     const nextBlocks = hasBlocks ? blocks : parseDraft(existing).bodyBlocks;
-    if ((hasBlocks || hasTags) && !validateWriterOutput({bodyBlocks:nextBlocks,tags:nextTags}).valid) return failure("bodyBlocks 7개·본문 700~800자·중복 없는 태그 10개·# 금지 조건을 확인해 주세요.",422);
+    if ((hasBlocks || hasTags) && !validateWriterOutput({bodyBlocks:nextBlocks,tags:nextTags}).valid) return failure("bodyBlocks 7개·본문 600~800자·중복 없는 태그 10개·# 금지 조건을 확인해 주세요.",422);
     const nextContent = (hasBlocks || hasTags) ? renderDraft(nextBlocks,nextTags) : (hasContent ? content : existing.content);
     const nextStatus = hasStatus ? status : existing.status;
     const nextImageMode = hasImageMode ? imageMode : (existing.image_mode || "none");
