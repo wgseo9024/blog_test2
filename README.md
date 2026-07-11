@@ -10,11 +10,12 @@
 3. 프레임워크 프리셋은 `None`, 빌드 명령은 비워 두고, 빌드 출력 디렉터리는 `/`로 설정합니다.
 4. 프로젝트의 **Settings → Variables and Secrets**에서 다음 값을 추가합니다.
    - `OPENAI_API_KEY`: OpenAI API 키. 반드시 **Secret/Encrypt**로 저장합니다.
-   - `OPENAI_MODEL`: 선택 사항. 기본값은 `gpt-5.4-mini`입니다.
+   - `OPENAI_MODEL`: 선택 사항. 기본값은 `gpt-5.6-sol`입니다.
 5. 새 배포를 실행합니다.
 
-배포 후 화면에서 키워드와 작성 지침을 입력하고 **자동화 실행**을 누르면
-`/api/generate` Pages Function이 OpenAI Responses API를 호출합니다.
+배포 후 화면에 연예뉴스 기사 제목과 본문을 붙여 넣고 **블로그 글 작성**을 누르면
+`/api/generate` Pages Function이 OpenAI Responses API를 호출합니다. 웹 검색 없이
+사용자가 제공한 기사 내용 안에서만 제목, 700~800자 분량의 본문, 태그 10개를 생성합니다.
 
 ## 로컬 실행
 
@@ -22,7 +23,7 @@
 
 ```dotenv
 OPENAI_API_KEY=sk-...
-OPENAI_MODEL=gpt-5.4-mini
+OPENAI_MODEL=gpt-5.6-sol
 ```
 
 그다음 Wrangler로 Pages 개발 서버를 실행합니다.

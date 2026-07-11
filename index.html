@@ -616,61 +616,13 @@
         </div>
 
         <div class="field">
-          <label for="keyword">수집 키워드</label>
-          <input id="keyword" type="text" value="AI 반도체 뉴스" placeholder="예: 전기차 보조금" />
+          <label for="articleTitle">기사 제목</label>
+          <input id="articleTitle" type="text" placeholder="연예뉴스 기사 제목을 붙여 넣으세요" />
         </div>
 
         <div class="field">
-          <label for="category">카테고리</label>
-          <select id="category">
-            <option>IT·테크</option>
-            <option>경제</option>
-            <option>자동차</option>
-            <option>연예</option>
-            <option>건강</option>
-            <option>생활정보</option>
-          </select>
-        </div>
-
-        <div class="field">
-          <label for="source">뉴스 수집 소스</label>
-          <select id="source">
-            <option>네이버 뉴스 검색 API</option>
-            <option>RSS 피드</option>
-            <option>등록한 뉴스 사이트</option>
-            <option>전체 소스</option>
-          </select>
-        </div>
-
-        <div class="field">
-          <label for="interval">뉴스 감지 주기</label>
-          <select id="interval">
-            <option>10분마다</option>
-            <option>30분마다</option>
-            <option>1시간마다</option>
-            <option>3시간마다</option>
-            <option>하루 1회</option>
-          </select>
-        </div>
-
-        <div class="field">
-          <label for="articleCount">비교 기사 수</label>
-          <input id="articleCount" type="number" min="2" max="20" value="5" />
-        </div>
-
-        <div class="field">
-          <label for="tone">글 작성 스타일</label>
-          <select id="tone">
-            <option>네이버 블로그 정보형</option>
-            <option>친근한 개인 블로거형</option>
-            <option>전문가 해설형</option>
-            <option>이슈 요약형</option>
-          </select>
-        </div>
-
-        <div class="field">
-          <label for="prompt">추가 작성 지침</label>
-          <textarea id="prompt">도입부 + 핵심 내용 3개 + 결론 구성으로 작성하고, 과장 표현 없이 사실 중심으로 작성해 주세요.</textarea>
+          <label for="articleContent">기사 내용</label>
+          <textarea id="articleContent" style="min-height:300px;" placeholder="기사 본문을 붙여 넣으세요. 입력한 내용 안에서만 글을 작성합니다."></textarea>
         </div>
 
         <div class="switch-row">
@@ -698,7 +650,7 @@
         </div>
 
         <button class="btn btn-primary" id="runBtn" style="width:100%;margin-top:18px;">
-          자동화 실행
+          블로그 글 작성
         </button>
 
         <div class="status" id="statusBox">뉴스 수집과 초안 생성이 시작되었습니다.</div>
@@ -947,7 +899,7 @@ AI 반도체 시장의 성장은 칩 제조사만의 이야기가 아닙니다. 
       const title = document.getElementById("blogTitle").value.trim();
       const content = document.getElementById("blogContent").value.trim();
       const tags = [...document.querySelectorAll(".tag")].map(tag => tag.textContent).join(" ");
-      return `${title}\n\n${content}\n\n${tags}`;
+      return `**${title}**\n\n${content}\n\n${tags}`;
     };
 
     const renderTags = (tags) => {
@@ -962,27 +914,25 @@ AI 반도체 시장의 성장은 칩 제조사만의 이야기가 아닙니다. 
 
     document.getElementById("runBtn").addEventListener("click", async () => {
       const button = document.getElementById("runBtn");
-      const keyword = document.getElementById("keyword").value.trim();
+      const articleTitle = document.getElementById("articleTitle").value.trim();
+      const articleContent = document.getElementById("articleContent").value.trim();
 
-      if (!keyword) {
-        showStatus("수집 키워드를 입력해 주세요.");
+      if (!articleTitle || !articleContent) {
+        showStatus("기사 제목과 기사 내용을 모두 입력해 주세요.");
         return;
       }
 
       button.disabled = true;
       button.textContent = "AI가 글을 작성하는 중...";
-      showStatus("최신 자료를 검색하고 블로그 초안을 작성하고 있습니다.");
+      showStatus("입력한 기사를 바탕으로 연예뉴스 블로그 글을 작성하고 있습니다.");
 
       try {
         const response = await fetch("/api/generate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            keyword,
-            category: document.getElementById("category").value,
-            articleCount: document.getElementById("articleCount").value,
-            tone: document.getElementById("tone").value,
-            prompt: document.getElementById("prompt").value,
+            articleTitle,
+            articleContent,
           }),
         });
 
@@ -999,7 +949,7 @@ AI 반도체 시장의 성장은 칩 제조사만의 이야기가 아닙니다. 
         showStatus(error.message || "요청 중 오류가 발생했습니다.");
       } finally {
         button.disabled = false;
-        button.textContent = "자동화 실행";
+        button.textContent = "블로그 글 작성";
       }
     });
 
@@ -1106,7 +1056,7 @@ ${content}
         } else if (action === "subtitle" && selected) {
           content.setRangeText(`\n## ${selected}\n`, start, end, "end");
         } else {
-          showStatus(`${button.textContent} 기능은 백엔드 AI API 연결 후 작동합니다.`);
+          showStatus(`${button.textContent} 기능은 백엔드 AI  연결 후 작동합니다.`);
         }
       });
     });
