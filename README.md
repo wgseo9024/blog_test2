@@ -9,6 +9,7 @@
 
 - `functions/api/articles/index.js`: `GET /api/articles`, `POST /api/articles`
 - `functions/api/articles/[id].js`: `GET /api/articles/:id`, `DELETE /api/articles/:id`
+- `functions/api/news/collect.js`: `POST /api/news/collect` (고정 RSS 수집 및 D1 저장)
 - `index.html`: 기사 제목, URL, 출처, 요약 저장 폼과 최근 기사 목록 테스트 영역
 
 목록 API는 최신순으로 최대 100건을 반환하며 `status`, `source`, `keyword` 쿼리
@@ -75,3 +76,42 @@ curl -X POST 'http://localhost:8788/api/articles' \
 curl 'http://localhost:8788/api/articles/1'
 curl -X DELETE 'http://localhost:8788/api/articles/1'
 ```
+
+## RSS 뉴스 수집 API
+
+`POST /api/news/collect`는 다음 4개 연예뉴스 RSS를 `fetch`로 요청하고, 피드별
+최대 30개 기사를 `articles` 테이블에 저장합니다. 외부 패키지를 사용하지 않으며
+RSS 2.0의 `item`과 Atom의 `entry`를 처리합니다.
+
+- `sports-khan`: 스포츠경향 연예
+- `mydaily`: 마이데일리 스타
+- `newsis`: 뉴시스 연예
+- `mbn`: MBN 연예
+
+본문이 없으면 4개 피드를 모두 수집합니다.
+
+```bash
+curl -X POST 'http://localhost:8788/api/news/collect'
+```
+
+`sources` 배열에는 위 소스 ID를 지정합니다. 소스 이름이나 등록된 RSS URL도 사용할
+수 있습니다.
+
+```bash
+curl -X POST 'http://localhost:8788/api/news/collect' \
+  -H 'Content-Type: application/json' \
+  -d '{"sources":["sports-khan","newsis"]}'
+```
+
+성공 응답은 전체 집계와 피드별 `fetched`, `inserted`, `duplicates`, `failed`를
+반환합니다. HTTP 403/404, 타임아웃, XML 해석 오류는 해당 피드의 `error.type`과
+안전한 사용자 메시지로 구분됩니다. 한 피드가 실패해도 나머지 피드 수집은 계속됩니다.
+
+### RSS 수집 테스트
+
+1. 로컬 D1 migration을 적용하고 `npx wrangler pages dev .`를 실행합니다.
+2. 화면의 **RSS 뉴스 수집**에서 네 소스가 기본 선택되어 있는지 확인합니다.
+3. **뉴스 수집**을 눌러 피드별 저장·중복·실패 수와 자동 갱신된 기사 목록을 확인합니다.
+4. 같은 선택으로 다시 수집해 기존 URL이 `duplicates`로 집계되는지 확인합니다.
+5. 위 `curl` 예제로 무본문 전체 수집과 `sources` 선택 수집을 각각 확인합니다.
+6. `sources`를 빈 배열로 보내면 HTTP 400, GET 요청은 HTTP 405인지 확인합니다.

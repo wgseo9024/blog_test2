@@ -544,6 +544,76 @@
       margin-top: 18px;
     }
 
+    .rss-collector {
+      margin-top: 18px;
+    }
+
+    .rss-source-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .rss-source {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fbfcfe;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .rss-source input {
+      width: 18px;
+      height: 18px;
+      accent-color: var(--primary);
+    }
+
+    .rss-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .rss-results {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .rss-result {
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fbfcfe;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .rss-result strong { display: block; }
+    .rss-result.error { border-color: #fecdd3; background: #fff7f7; }
+
+    .spinner {
+      display: inline-block;
+      width: 15px;
+      height: 15px;
+      margin-right: 7px;
+      border: 2px solid rgba(255,255,255,0.45);
+      border-top-color: white;
+      border-radius: 50%;
+      vertical-align: -2px;
+      animation: spin 0.75s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
     .article-form-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -654,6 +724,11 @@
 
       .article-form-grid .wide {
         grid-column: auto;
+      }
+
+      .rss-source-grid,
+      .rss-results {
+        grid-template-columns: 1fr;
       }
     }
   </style>
@@ -942,6 +1017,28 @@ AI 반도체 시장의 성장은 칩 제조사만의 이야기가 아닙니다. 
             </div>
           </section>
         </div>
+
+        <section class="card rss-collector" aria-labelledby="rssCollectorTitle">
+          <div class="section-title">
+            <div>
+              <h3 id="rssCollectorTitle">RSS 뉴스 수집</h3>
+              <p style="margin:5px 0 0;color:var(--muted);font-size:13px;">선택한 연예뉴스 RSS를 가져와 중복 없이 D1에 저장합니다.</p>
+            </div>
+            <span class="badge green">최대 피드당 30건</span>
+          </div>
+
+          <div class="rss-source-grid" role="group" aria-label="RSS 소스 선택">
+            <label class="rss-source"><input type="checkbox" name="rssSource" value="sports-khan" checked /> 스포츠경향 연예</label>
+            <label class="rss-source"><input type="checkbox" name="rssSource" value="mydaily" checked /> 마이데일리 스타</label>
+            <label class="rss-source"><input type="checkbox" name="rssSource" value="newsis" checked /> 뉴시스 연예</label>
+            <label class="rss-source"><input type="checkbox" name="rssSource" value="mbn" checked /> MBN 연예</label>
+          </div>
+          <div class="rss-actions">
+            <button class="btn btn-primary" id="collectNewsBtn" type="button">뉴스 수집</button>
+            <span class="article-feedback" id="rssFeedback" role="status" aria-live="polite"></span>
+          </div>
+          <div class="rss-results" id="rssResults" aria-live="polite"></div>
+        </section>
 
         <section class="card article-test-card" aria-labelledby="articleTestTitle">
           <div class="section-title">
@@ -1258,6 +1355,66 @@ ${content}
     };
 
     document.getElementById("loadArticlesBtn").addEventListener("click", loadSavedArticles);
+
+    const setRssFeedback = (message, isError = false) => {
+      const feedback = document.getElementById("rssFeedback");
+      feedback.textContent = message;
+      feedback.style.color = isError ? "var(--danger)" : "var(--muted)";
+    };
+
+    const renderRssResults = (data) => {
+      const results = document.getElementById("rssResults");
+      results.replaceChildren(...data.sources.map((source) => {
+        const item = document.createElement("div");
+        item.className = `rss-result${source.error ? " error" : ""}`;
+        const name = document.createElement("strong");
+        name.textContent = source.name;
+        const counts = document.createElement("span");
+        counts.textContent = `가져옴 ${source.fetched} · 저장 ${source.inserted} · 중복 ${source.duplicates} · 실패 ${source.failed}`;
+        item.append(name, counts);
+        if (source.error) {
+          const error = document.createElement("div");
+          error.style.color = "var(--danger)";
+          error.textContent = source.error.message;
+          item.append(error);
+        }
+        return item;
+      }));
+    };
+
+    document.getElementById("collectNewsBtn").addEventListener("click", async () => {
+      const button = document.getElementById("collectNewsBtn");
+      const sources = [...document.querySelectorAll('input[name="rssSource"]:checked')]
+        .map((input) => input.value);
+      if (!sources.length) {
+        setRssFeedback("수집할 RSS를 하나 이상 선택해 주세요.", true);
+        return;
+      }
+
+      button.disabled = true;
+      button.innerHTML = '<span class="spinner" aria-hidden="true"></span>수집 중...';
+      setRssFeedback("선택한 RSS에서 뉴스를 수집하고 있습니다...");
+      document.getElementById("rssResults").replaceChildren();
+      try {
+        const response = await fetch("/api/news/collect", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sources }),
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+          throw new Error(result.error?.message || "RSS 뉴스를 수집하지 못했습니다.");
+        }
+        renderRssResults(result.data);
+        setRssFeedback(`수집 완료: ${result.data.inserted}건 저장, ${result.data.duplicates}건 중복, ${result.data.failed}건 실패`);
+        await loadSavedArticles();
+      } catch (error) {
+        setRssFeedback(error.message || "RSS 수집 요청 중 오류가 발생했습니다.", true);
+      } finally {
+        button.disabled = false;
+        button.textContent = "뉴스 수집";
+      }
+    });
 
     document.getElementById("articleSaveForm").addEventListener("submit", async (event) => {
       event.preventDefault();
