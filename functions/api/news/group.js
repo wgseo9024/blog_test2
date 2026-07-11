@@ -157,7 +157,7 @@ export const buildGroups = (articles, settings) => {
   }
   // 다른 언론사의 동일 이슈가 없어도 수집 기사가 초안 생성 흐름에서 사라지지 않도록
   // 다중 출처 그룹을 우선 만든 뒤 남은 기사는 각각 단일 이슈 그룹으로 승격한다.
-  for (const article of prepared) {
+  for (const article of articles) {
     if (!assigned.has(article.id)) groups.push([{ article, score: 1 }]);
   }
   return groups;
