@@ -540,6 +540,66 @@
       display: none;
     }
 
+    .article-test-card {
+      margin-top: 18px;
+    }
+
+    .article-form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0 14px;
+    }
+
+    .article-form-grid .wide {
+      grid-column: 1 / -1;
+    }
+
+    .article-test-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .article-feedback {
+      min-height: 20px;
+      margin: 12px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .saved-articles {
+      display: grid;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .saved-article {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 14px;
+      padding: 13px 14px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fbfcfe;
+    }
+
+    .saved-article h4 {
+      margin: 0 0 7px;
+      font-size: 14px;
+    }
+
+    .saved-article h4 a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    .saved-article h4 a:hover {
+      color: var(--blue);
+      text-decoration: underline;
+    }
+
     @media (max-width: 1180px) {
       .layout {
         grid-template-columns: 1fr;
@@ -586,6 +646,14 @@
 
       .download-actions {
         grid-template-columns: 1fr;
+      }
+
+      .article-form-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .article-form-grid .wide {
+        grid-column: auto;
       }
     }
   </style>
@@ -874,6 +942,44 @@ AI 반도체 시장의 성장은 칩 제조사만의 이야기가 아닙니다. 
             </div>
           </section>
         </div>
+
+        <section class="card article-test-card" aria-labelledby="articleTestTitle">
+          <div class="section-title">
+            <div>
+              <h3 id="articleTestTitle">D1 기사 저장 테스트</h3>
+              <p style="margin:5px 0 0;color:var(--muted);font-size:13px;">기사를 저장하고 최근 저장 목록을 API에서 확인합니다.</p>
+            </div>
+            <span class="badge green">D1 연결</span>
+          </div>
+
+          <form id="articleSaveForm">
+            <div class="article-form-grid">
+              <div class="field">
+                <label for="savedArticleTitle">기사 제목 *</label>
+                <input id="savedArticleTitle" name="title" required maxlength="500" placeholder="저장할 기사 제목" />
+              </div>
+              <div class="field">
+                <label for="savedArticleUrl">기사 URL *</label>
+                <input id="savedArticleUrl" name="url" type="url" required maxlength="3000" placeholder="https://example.com/article" />
+              </div>
+              <div class="field">
+                <label for="savedArticleSource">출처</label>
+                <input id="savedArticleSource" name="source" maxlength="300" placeholder="언론사 또는 출처" />
+              </div>
+              <div class="field wide">
+                <label for="savedArticleSummary">요약</label>
+                <textarea id="savedArticleSummary" name="summary" maxlength="5000" placeholder="기사의 핵심 내용을 입력하세요."></textarea>
+              </div>
+            </div>
+            <div class="article-test-actions">
+              <button class="btn btn-primary" id="saveArticleBtn" type="submit">기사 저장</button>
+              <button class="btn btn-outline" id="loadArticlesBtn" type="button">저장된 기사 목록 불러오기</button>
+            </div>
+          </form>
+
+          <p class="article-feedback" id="articleFeedback" role="status" aria-live="polite"></p>
+          <div class="saved-articles" id="savedArticles"></div>
+        </section>
       </main>
     </div>
   </div>
@@ -1080,6 +1186,107 @@ ${content}
         .replaceAll('"', "&quot;")
         .replaceAll("'", "&#039;");
     };
+
+    const setArticleFeedback = (message, isError = false) => {
+      const feedback = document.getElementById("articleFeedback");
+      feedback.textContent = message;
+      feedback.style.color = isError ? "var(--danger)" : "var(--muted)";
+    };
+
+    const formatArticleDate = (value) => {
+      if (!value) return "발행일 없음";
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? value : date.toLocaleString("ko-KR");
+    };
+
+    const renderSavedArticles = (articles) => {
+      const list = document.getElementById("savedArticles");
+      if (!articles.length) {
+        list.replaceChildren();
+        setArticleFeedback("저장된 기사가 없습니다.");
+        return;
+      }
+
+      list.replaceChildren(...articles.map((article) => {
+        const item = document.createElement("article");
+        item.className = "saved-article";
+
+        const info = document.createElement("div");
+        const title = document.createElement("h4");
+        const link = document.createElement("a");
+        link.href = article.url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = article.title;
+        title.append(link);
+
+        const meta = document.createElement("div");
+        meta.className = "news-meta";
+        meta.style.marginBottom = "0";
+        [article.source || "출처 없음", formatArticleDate(article.published_at)].forEach((text) => {
+          const span = document.createElement("span");
+          span.textContent = text;
+          meta.append(span);
+        });
+        info.append(title, meta);
+
+        const status = document.createElement("span");
+        status.className = "badge green";
+        status.textContent = article.status || "new";
+        item.append(info, status);
+        return item;
+      }));
+      setArticleFeedback(`최근 기사 ${articles.length}건을 불러왔습니다.`);
+    };
+
+    const loadSavedArticles = async () => {
+      const button = document.getElementById("loadArticlesBtn");
+      button.disabled = true;
+      setArticleFeedback("기사 목록을 불러오는 중입니다...");
+      try {
+        const response = await fetch("/api/articles");
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+          throw new Error(result.error?.message || "기사 목록을 불러오지 못했습니다.");
+        }
+        renderSavedArticles(result.data.articles);
+      } catch (error) {
+        setArticleFeedback(error.message || "기사 목록 요청 중 오류가 발생했습니다.", true);
+      } finally {
+        button.disabled = false;
+      }
+    };
+
+    document.getElementById("loadArticlesBtn").addEventListener("click", loadSavedArticles);
+
+    document.getElementById("articleSaveForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const button = document.getElementById("saveArticleBtn");
+      const formData = new FormData(form);
+      const payload = Object.fromEntries(formData.entries());
+
+      button.disabled = true;
+      setArticleFeedback("기사를 저장하는 중입니다...");
+      try {
+        const response = await fetch("/api/articles", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+          throw new Error(result.error?.message || "기사를 저장하지 못했습니다.");
+        }
+        form.reset();
+        setArticleFeedback("기사를 저장했습니다.");
+        await loadSavedArticles();
+      } catch (error) {
+        setArticleFeedback(error.message || "기사 저장 요청 중 오류가 발생했습니다.", true);
+      } finally {
+        button.disabled = false;
+      }
+    });
 
     window.addEventListener("DOMContentLoaded", () => {
       const savedTitle = localStorage.getItem("blogTitle");
