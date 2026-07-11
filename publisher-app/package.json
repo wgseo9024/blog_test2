@@ -2,6 +2,13 @@
   "name": "blog-test2-publisher",
   "private": true,
   "type": "module",
-  "scripts": { "start": "node src/index.js", "check": "node --check src/index.js" },
+  "scripts": {
+    "start": "npm run save-draft",
+    "login-check": "node src/index.js --login-check",
+    "dry-run": "node src/index.js --dry-run",
+    "save-draft": "node src/index.js --save-draft",
+    "publish": "node src/index.js --publish",
+    "check": "node --check src/index.js"
+  },
   "dependencies": { "playwright": "^1.53.0" }
 }

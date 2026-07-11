@@ -4,7 +4,10 @@
 node_modules/
 publisher-app/.session/
 publisher-app/artifacts/
+publisher-app/screenshots/
+publisher-app/logs/
 publisher-app/.env*
+!publisher-app/.env.example
 publisher-app/*.log
 
 backups/
