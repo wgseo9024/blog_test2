@@ -9,7 +9,7 @@ const SOURCES = [
 
 const FEED_LIMIT = 5;
 const REQUEST_TIMEOUT_MS = 10000;
-const USER_AGENT = "BlogNewsCollector/1.0 (+Cloudflare Pages; RSS reader)";
+const USER_AGENT = "Mozilla/5.0 (compatible; BlogNewsCollector/1.0; +https://wgseo9024.github.io/blog_test2/)";
 
 const json = (data, status = 200, headers = {}) => Response.json(data, {
   status,
@@ -83,7 +83,7 @@ const normalizeDate = (value) => {
   return Number.isNaN(date.getTime()) ? cleaned.slice(0, 100) : date.toISOString();
 };
 
-const parseFeed = (xml, source) => {
+export const parseFeed = (xml, source) => {
   const body = String(xml || "").replace(/^\uFEFF/, "").trim();
   if (!body.startsWith("<") || !/<(?:rss|feed|rdf:RDF)\b/i.test(body)) {
     throw new Error("PARSE_ERROR");
@@ -159,13 +159,12 @@ const fetchFeed = async (source) => {
   }
 };
 
-const collectSource = async (env, source) => {
+export const collectSource = async (env, source) => {
   const result = { name: source.name, fetched: 0, inserted: 0, duplicates: 0, failed: 0 };
   let articles;
   try {
     const xml = await fetchFeed(source);
     try {
-      const ad = scoreAdvertisement(article);
       articles = parseFeed(xml, source);
     } catch {
       const type = "xml_parse";
@@ -185,6 +184,7 @@ const collectSource = async (env, source) => {
       continue;
     }
     try {
+      const ad = scoreAdvertisement(article);
       const existing = await env.DB.prepare("SELECT id FROM articles WHERE url = ? LIMIT 1")
         .bind(article.url).first();
       if (existing) {
