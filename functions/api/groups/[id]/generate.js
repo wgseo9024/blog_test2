@@ -69,7 +69,9 @@ export async function generateGroupDraft(env, rawId, options = {}) {
     const { facts, cacheHit } = await factsForGroup(env, groupId, articles);
     let draft = await response(env, "blog_writer", WRITER_PROMPT, { articles, facts }, schemas.writer);
     let local = validateWriterOutput(draft);
-    let ai = await response(env, "blog_validator", VALIDATOR_PROMPT, { articles, facts, draft, localIssues: local.issues }, schemas.validator);
+    let ai = local.valid
+      ? await response(env, "blog_validator", VALIDATOR_PROMPT, { articles, facts, draft, localIssues: local.issues }, schemas.validator)
+      : { valid: false, issues: [] };
     let issues = [...local.issues, ...(ai.valid ? [] : ai.issues)];
     let revised = false;
     if (issues.length) {
