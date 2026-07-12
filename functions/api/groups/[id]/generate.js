@@ -1,5 +1,6 @@
 import { extractAndStore } from "../../../lib/article-content.js";
 import { renderDraft, validateWriterOutput } from "../../../lib/draft-validation.js";
+import { readFactCache, writeFactCache } from "../../../lib/fact-cache.js";
 
 const json = (body, status = 200) => Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 const ok = (data, status = 200) => json({ success: true, data }, status);
@@ -38,6 +39,14 @@ export const WRITER_PROMPT = `너는 네이버 블로그용 연예뉴스 글을 
 export const VALIDATOR_PROMPT = "기사와 Fact에 없는 인물·사건·반응, 과장하거나 자극적인 제목, 비난·단정, 원문 과도 복제 여부를 검사하라. 소제목은 금지이므로 소제목이 있으면 오류이고, 소제목이 없는 것은 정상이다. 정확히 7 blocks, 각 block 90자 이상, 중복 없는 10 tags, 본문 공백 포함 600~800자를 엄격히 검사하라. 문장별 글자 수와 전체 글자 수 조건을 반드시 지켜야 한다.";
 export { schemas };
 
+export async function factsForGroup(env, groupId, articles, responseName = "article_facts") {
+  const cached = await readFactCache(env, groupId, articles);
+  if (cached.facts) return { facts: cached.facts, cacheHit: true };
+  const facts = await response(env, responseName, FACT_PROMPT, { articles }, schemas.fact);
+  await writeFactCache(env, groupId, cached.signature, facts, env.OPENAI_MODEL);
+  return { facts, cacheHit: false };
+}
+
 export async function generateGroupDraft(env, rawId, options = {}) {
   const groupId = idOf(rawId);
   if (!groupId) return fail("올바른 그룹 id가 아닙니다.", 400, "INVALID_GROUP_ID");
@@ -47,10 +56,15 @@ export async function generateGroupDraft(env, rawId, options = {}) {
   if (options.preventDuplicate !== false && await env.DB.prepare("SELECT id FROM drafts WHERE article_group_id=?").bind(groupId).first()) return fail("이미 초안이 생성된 이슈 그룹입니다.", 409, "DRAFT_EXISTS");
   const rows = (await env.DB.prepare(`SELECT a.* FROM article_group_items i JOIN articles a ON a.id=i.article_id WHERE i.group_id=? AND COALESCE(a.is_advertisement,0)=0 ORDER BY COALESCE(a.published_at,a.created_at) DESC LIMIT 3`).bind(groupId).all()).results || [];
   if (!rows.length) return fail("광고가 아닌 기사가 없어 생성할 수 없습니다.", 422, "NO_ELIGIBLE_ARTICLES");
-  for (const article of rows) if (!article.extracted_content) { const x = await extractAndStore(env, article); article.extracted_content = x.text; }
+  await Promise.all(rows.map(async (article) => {
+    if (!article.extracted_content) {
+      const extracted = await extractAndStore(env, article);
+      article.extracted_content = extracted.text;
+    }
+  }));
   const articles = rows.map((a) => ({ id: a.id, title: clean(a.title, 500), source: clean(a.source, 200), content: clean(a.extracted_content || a.summary || a.content, 12000) }));
   try {
-    const facts = await response(env, "article_facts", FACT_PROMPT, { articles }, schemas.fact);
+    const { facts, cacheHit } = await factsForGroup(env, groupId, articles);
     let draft = await response(env, "blog_writer", WRITER_PROMPT, { articles, facts }, schemas.writer);
     let local = validateWriterOutput(draft);
     let ai = await response(env, "blog_validator", VALIDATOR_PROMPT, { articles, facts, draft, localIssues: local.issues }, schemas.validator);
@@ -67,7 +81,7 @@ export async function generateGroupDraft(env, rawId, options = {}) {
     const status = issues.length ? "review" : (["draft", "review", "queued"].includes(options.status) ? options.status : "draft");
     const rendered = renderDraft(local.bodyBlocks, local.tags);
     const saved = await env.DB.prepare(`INSERT INTO drafts (article_group_id,title,content,tags,status,body_blocks_json,tags_json,rendered_content,source_article_ids_json,generation_model,generation_status,validation_status,validation_issues_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING *`).bind(groupId, clean(draft.title,500), rendered, JSON.stringify(local.tags), status, JSON.stringify(local.bodyBlocks), JSON.stringify(local.tags), rendered, JSON.stringify(rows.map((a)=>a.id)), env.OPENAI_MODEL, revised ? "revised_once" : "generated", validationStatus, JSON.stringify(issues)).first();
-    return ok({ draft: { ...saved, tags: local.tags, bodyBlocks: local.bodyBlocks, validationIssues: issues }, article_count: rows.length }, 201);
+    return ok({ draft: { ...saved, tags: local.tags, bodyBlocks: local.bodyBlocks, validationIssues: issues }, article_count: rows.length, optimization: { parallelExtraction: true, factCacheHit: cacheHit } }, 201);
   } catch (error) {
     console.error("Three-stage generation failed", error);
     return fail("초안 생성 또는 검증에 실패했습니다.", 502, error.message === "OPENAI_API_ERROR" ? "OPENAI_API_ERROR" : "DRAFT_PROCESSING_ERROR");

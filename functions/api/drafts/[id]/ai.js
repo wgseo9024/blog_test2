@@ -1,4 +1,4 @@
-import { FACT_PROMPT, VALIDATOR_PROMPT, WRITER_PROMPT, response, schemas } from "../../groups/[id]/generate.js";
+import { VALIDATOR_PROMPT, WRITER_PROMPT, factsForGroup, response, schemas } from "../../groups/[id]/generate.js";
 import { renderDraft, validateWriterOutput } from "../../../lib/draft-validation.js";
 const out=(body,status=200)=>Response.json(body,{status,headers:{"Cache-Control":"no-store"}});
 const fail=(message,status=400)=>out({success:false,error:{message}},status);
@@ -11,7 +11,7 @@ export async function onRequestPost({request,env,params}) {
   const draft=await env.DB.prepare("SELECT * FROM drafts WHERE id=?").bind(id).first();if(!draft)return fail("초안을 찾을 수 없습니다.",404);
   const articles=(await env.DB.prepare(`SELECT a.id,a.title,a.source,COALESCE(a.extracted_content,a.summary,a.content) content FROM article_group_items gi JOIN articles a ON a.id=gi.article_id WHERE gi.group_id=? AND COALESCE(a.is_advertisement,0)=0 ORDER BY COALESCE(a.published_at,a.created_at) DESC LIMIT 3`).bind(draft.article_group_id).all()).results||[];
   if(!articles.length)return fail("검수 근거 기사를 찾을 수 없습니다.",422);
-  const facts=await response(env,"draft_action_facts",FACT_PROMPT,{articles},schemas.fact);
+  const {facts,cacheHit}=await factsForGroup(env,draft.article_group_id,articles,"draft_action_facts");
   let current={title:draft.title,bodyBlocks:parse(draft.body_blocks_json),tags:parse(draft.tags_json,draft.tags)};
   if(body.action==="regenerate_title") {
     const schema={type:"object",properties:{title:{type:"string"}},required:["title"],additionalProperties:false};
@@ -36,6 +36,6 @@ export async function onRequestPost({request,env,params}) {
   const rendered=renderDraft(local.bodyBlocks,local.tags);
   const saved=await env.DB.prepare(`UPDATE drafts SET title=?,content=?,tags=?,body_blocks_json=?,tags_json=?,rendered_content=?,generation_model=?,generation_status=?,validation_status=?,validation_issues_json=?,status=?,approval_status='draft',approved_at=NULL,approved_draft_version=NULL,draft_version=draft_version+1,updated_at=CURRENT_TIMESTAMP WHERE id=? RETURNING *`).bind(current.title,rendered,JSON.stringify(local.tags),JSON.stringify(local.bodyBlocks),JSON.stringify(local.tags),rendered,env.OPENAI_MODEL,body.action,validationStatus,JSON.stringify(issues),status,id).first();
   await env.DB.prepare("UPDATE automation_settings SET enabled=0,next_run_at=NULL,updated_at=CURRENT_TIMESTAMP WHERE approved_draft_id=?").bind(id).run();
-  return out({success:true,data:{draft:{...saved,bodyBlocks:local.bodyBlocks,tags:local.tags,validationIssues:issues}}});
+  return out({success:true,data:{draft:{...saved,bodyBlocks:local.bodyBlocks,tags:local.tags,validationIssues:issues},optimization:{factCacheHit:cacheHit}}});
 }
 export function onRequest(c){return c.request.method==="POST"?onRequestPost(c):fail("POST 요청만 허용됩니다.",405);}
