@@ -34,7 +34,8 @@ export async function onRequestPost({request,env,params}) {
   const validationStatus=issues.length?"review_required":"passed";
   const status=issues.length?"review":draft.status;
   const rendered=renderDraft(local.bodyBlocks,local.tags);
-  const saved=await env.DB.prepare(`UPDATE drafts SET title=?,content=?,tags=?,body_blocks_json=?,tags_json=?,rendered_content=?,generation_model=?,generation_status=?,validation_status=?,validation_issues_json=?,status=?,updated_at=CURRENT_TIMESTAMP WHERE id=? RETURNING *`).bind(current.title,rendered,JSON.stringify(local.tags),JSON.stringify(local.bodyBlocks),JSON.stringify(local.tags),rendered,env.OPENAI_MODEL,body.action,validationStatus,JSON.stringify(issues),status,id).first();
+  const saved=await env.DB.prepare(`UPDATE drafts SET title=?,content=?,tags=?,body_blocks_json=?,tags_json=?,rendered_content=?,generation_model=?,generation_status=?,validation_status=?,validation_issues_json=?,status=?,approval_status='draft',approved_at=NULL,approved_draft_version=NULL,draft_version=draft_version+1,updated_at=CURRENT_TIMESTAMP WHERE id=? RETURNING *`).bind(current.title,rendered,JSON.stringify(local.tags),JSON.stringify(local.bodyBlocks),JSON.stringify(local.tags),rendered,env.OPENAI_MODEL,body.action,validationStatus,JSON.stringify(issues),status,id).first();
+  await env.DB.prepare("UPDATE automation_settings SET enabled=0,next_run_at=NULL,updated_at=CURRENT_TIMESTAMP WHERE approved_draft_id=?").bind(id).run();
   return out({success:true,data:{draft:{...saved,bodyBlocks:local.bodyBlocks,tags:local.tags,validationIssues:issues}}});
 }
 export function onRequest(c){return c.request.method==="POST"?onRequestPost(c):fail("POST 요청만 허용됩니다.",405);}

@@ -3,7 +3,7 @@ import { onRequestPost as groupNews } from "../news/group.js";
 import { generateGroupDraft } from "../groups/[id]/generate.js";
 import {
   acquireRunLock, ensureSettings, failure, json, MAX_DAILY_LIMIT,
-  nextRunAt, releaseRunLock, seoulDayBounds,
+  findCurrentApprovedDraft, nextRunAt, releaseRunLock, seoulDayBounds,
 } from "../../lib/automation.js";
 
 const responseData = async (response) => {
@@ -41,6 +41,10 @@ export async function executeAutomation({ env, triggerType = "scheduler" }) {
     try { settings = await ensureSettings(env); } catch (error) {
       console.error("Automation run settings error", error);
       throw new Error("자동화 설정을 불러오지 못해 실행을 시작할 수 없습니다.");
+    }
+    if (!await findCurrentApprovedDraft(env, settings.approved_draft_id)) {
+      await env.DB.prepare("UPDATE automation_settings SET enabled=0,next_run_at=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=1").run();
+      throw new Error("현재 버전이 승인된 초안이 없어 자동화를 실행할 수 없습니다.");
     }
 
   try {

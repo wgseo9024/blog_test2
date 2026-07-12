@@ -8,7 +8,7 @@ export async function onRequestPost({ request, env }) {
   if (!Number.isSafeInteger(draftId) || draftId < 1) return json({ success: false, error: { message: "올바른 초안 id가 아닙니다." } }, 400);
   const token = crypto.randomUUID(); const now = new Date(); const expires = new Date(now.getTime() + 15 * 60000).toISOString();
   const draft = await env.DB.prepare(`UPDATE drafts SET lease_token = ?, lease_expires_at = ?, updated_at = CURRENT_TIMESTAMP
-    WHERE id = ? AND status = 'queued' AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
+    WHERE id = ? AND status = 'queued' AND approval_status='approved' AND approved_draft_version=draft_version AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
     RETURNING id, article_group_id, title, content, tags, status, image_mode, body_blocks_json,
       tags_json, rendered_content, validation_status`).bind(token, expires, draftId, now.toISOString()).first();
   if (!draft) return json({ success: false, error: { message: "이미 다른 발행 프로그램이 처리 중이거나 대기 상태가 아닙니다." } }, 409);

@@ -9,6 +9,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   timezone: "Asia/Seoul",
   last_run_at: null,
   next_run_at: null,
+  approved_draft_id: null,
 });
 
 export const ALLOWED_INTERVALS = new Set([10, 30, 60, 120, 180, 360]);
@@ -41,6 +42,14 @@ export const ensureSettings = async (env) => {
   return normalizeSettings(await env.DB.prepare(
     "SELECT * FROM automation_settings WHERE id = ? LIMIT 1",
   ).bind(1).first());
+};
+
+export const findCurrentApprovedDraft = async (env, draftId) => {
+  const id = Number(draftId);
+  if (!Number.isSafeInteger(id) || id < 1) return null;
+  return env.DB.prepare(`SELECT id,draft_version,approved_draft_version,approval_status,approved_at
+    FROM drafts WHERE id=? AND approval_status='approved' AND approved_at IS NOT NULL
+    AND approved_draft_version=draft_version LIMIT 1`).bind(id).first();
 };
 
 export const isTime = (value) => typeof value === "string"

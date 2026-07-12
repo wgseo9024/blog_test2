@@ -1,5 +1,5 @@
 import {
-  ALLOWED_INTERVALS, ALLOWED_MODES, ensureSettings, failure, isTime, json, nextRunAt,
+  ALLOWED_INTERVALS, ALLOWED_MODES, ensureSettings, failure, findCurrentApprovedDraft, isTime, json, nextRunAt,
 } from "../../lib/automation.js";
 
 export async function onRequestGet({ env }) {
@@ -20,6 +20,7 @@ export async function onRequestPut({ request, env }) {
   const dailyLimit = Number(input?.daily_limit);
   const startTime = input?.start_time;
   const endTime = input?.end_time;
+  const approvedDraftId = input?.approved_draft_id === null || input?.approved_draft_id === undefined ? null : Number(input.approved_draft_id);
   if (typeof enabled !== "boolean") return failure("enabled는 true 또는 false여야 합니다.", 400);
   if (!ALLOWED_MODES.has(mode)) return failure("올바른 자동화 방식을 선택해 주세요.", 400);
   if (!ALLOWED_INTERVALS.has(interval)) return failure("허용된 실행 간격을 선택해 주세요.", 400);
@@ -30,14 +31,16 @@ export async function onRequestPut({ request, env }) {
 
   try {
     const current = await ensureSettings(env);
+    const selectedApprovalId = enabled ? (approvedDraftId || Number(current.approved_draft_id)) : (approvedDraftId || current.approved_draft_id || null);
+    if (enabled && !await findCurrentApprovedDraft(env, selectedApprovalId)) return failure("현재 버전이 승인된 초안을 선택해야 자동화를 시작할 수 있습니다.", 409);
     const calculatedNextRun = nextRunAt({
       ...current, enabled, mode, interval_minutes: interval, daily_limit: dailyLimit,
       start_time: startTime, end_time: endTime,
     });
     await env.DB.prepare(`UPDATE automation_settings SET enabled = ?, mode = ?, interval_minutes = ?,
       daily_limit = ?, start_time = ?, end_time = ?, timezone = 'Asia/Seoul', next_run_at = ?,
-      updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(
-        enabled ? 1 : 0, mode, interval, dailyLimit, startTime, endTime, calculatedNextRun, 1,
+      approved_draft_id=?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(
+        enabled ? 1 : 0, mode, interval, dailyLimit, startTime, endTime, calculatedNextRun, selectedApprovalId, 1,
       ).run();
     return json({ success: true, data: { settings: await ensureSettings(env) } });
   } catch (error) {

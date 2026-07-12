@@ -8,7 +8,11 @@ const parseDraft = (draft) => {
   try {
     return { ...draft, tags: JSON.parse(draft.tags_json || draft.tags || "[]"),
       bodyBlocks: JSON.parse(draft.body_blocks_json || "[]"),
-      validationIssues: JSON.parse(draft.validation_issues_json || "[]") };
+      validationIssues: JSON.parse(draft.validation_issues_json || "[]"),
+      draftStatus: draft.approval_status, approvedAt: draft.approved_at,
+      approvedDraftVersion: draft.approved_draft_version, updatedAt: draft.updated_at,
+      selectedCoverImage: draft.selected_cover_image_id,
+      selectedContentImages: JSON.parse(draft.selected_content_image_ids_json || "[]") };
   } catch {
     return { ...draft, tags: [] };
   }
@@ -23,6 +27,7 @@ export async function onRequestGet({ env, request }) {
     const { results } = await env.DB.prepare(`SELECT id, article_group_id, title, content, tags,
       status, image_mode, publish_error, body_blocks_json,tags_json,rendered_content,
       source_article_ids_json,generation_model,generation_status,validation_status,validation_issues_json,
+      approval_status,approved_at,approved_draft_version,draft_version,selected_cover_image_id,selected_content_image_ids_json,
       created_at, updated_at FROM drafts
       ${status ? "WHERE status = ?" : ""} ORDER BY created_at DESC, id DESC LIMIT 100`)
       .bind(...(status ? [status] : [])).all();

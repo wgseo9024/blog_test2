@@ -13,7 +13,7 @@ const clean = (value, maxLength) => typeof value === "string" ? value.trim().sli
 const ALLOWED_STATUSES = new Set(["draft", "review", "queued", "published", "failed"]);
 const ALLOWED_IMAGE_MODES = new Set(["none", "candidate", "generate"]);
 const parseDraft = (draft) => {
-  try { return { ...draft, tags: JSON.parse(draft.tags_json || draft.tags || "[]"), bodyBlocks: JSON.parse(draft.body_blocks_json || "[]"), validationIssues: JSON.parse(draft.validation_issues_json || "[]") }; }
+  try { return { ...draft, tags: JSON.parse(draft.tags_json || draft.tags || "[]"), bodyBlocks: JSON.parse(draft.body_blocks_json || "[]"), validationIssues: JSON.parse(draft.validation_issues_json || "[]"), draftStatus:draft.approval_status,approvedAt:draft.approved_at,approvedDraftVersion:draft.approved_draft_version,updatedAt:draft.updated_at,selectedCoverImage:draft.selected_cover_image_id,selectedContentImages:JSON.parse(draft.selected_content_image_ids_json||"[]") }; }
   catch { return { ...draft, tags: [] }; }
 };
 
@@ -43,7 +43,9 @@ export async function onRequestPut({ request, env, params }) {
   const hasTags = Object.prototype.hasOwnProperty.call(input || {}, "tags");
   const hasImageMode = Object.prototype.hasOwnProperty.call(input || {}, "image_mode");
   const hasBlocks = Object.prototype.hasOwnProperty.call(input || {}, "bodyBlocks");
-  if (![hasTitle, hasContent, hasStatus, hasTags, hasImageMode,hasBlocks].some(Boolean)) {
+  const hasCover = Object.prototype.hasOwnProperty.call(input || {}, "selectedCoverImage");
+  const hasContentImages = Object.prototype.hasOwnProperty.call(input || {}, "selectedContentImages");
+  if (![hasTitle, hasContent, hasStatus, hasTags, hasImageMode,hasBlocks,hasCover,hasContentImages].some(Boolean)) {
     return failure("수정할 제목, 본문, 태그 또는 상태를 입력해 주세요.", 400);
   }
   const title = hasTitle ? clean(input.title, 500) : null;
@@ -54,12 +56,15 @@ export async function onRequestPut({ request, env, params }) {
     ? input.tags.map((tag) => clean(tag, 100).replace(/^#+/, "")).filter(Boolean)
     : null;
   const blocks = hasBlocks && Array.isArray(input.bodyBlocks) ? input.bodyBlocks.map((v)=>clean(v,5000)) : null;
+  const cover = hasCover && input.selectedCoverImage !== null ? Number(input.selectedCoverImage) : null;
+  const contentImages = hasContentImages && Array.isArray(input.selectedContentImages) ? [...new Set(input.selectedContentImages.map(Number))] : null;
   if ((hasTitle && !title) || (hasContent && !content) || (hasStatus && !status) || (hasTags && !tags)) {
     return failure("제목과 본문은 비워 둘 수 없고, 태그는 배열이어야 합니다.", 400);
   }
   if (tags && tags.length > 30) return failure("태그는 최대 30개까지 저장할 수 있습니다.", 400);
   if (status && !ALLOWED_STATUSES.has(status)) return failure("올바른 상태 값이 아닙니다.", 400);
   if (imageMode && !ALLOWED_IMAGE_MODES.has(imageMode)) return failure("올바른 이미지 방식이 아닙니다.", 400);
+  if ((hasCover && cover !== null && (!Number.isSafeInteger(cover)||cover<1)) || (hasContentImages && (!contentImages || contentImages.length>3 || contentImages.some((value)=>!Number.isSafeInteger(value)||value<1)))) return failure("대표 이미지는 1장, 본문 이미지는 최대 3장까지 선택할 수 있습니다.",400);
 
   try {
     const existing = await findDraft(env, id);
@@ -71,11 +76,17 @@ export async function onRequestPut({ request, env, params }) {
     const nextContent = (hasBlocks || hasTags) ? renderDraft(nextBlocks,nextTags) : (hasContent ? content : existing.content);
     const nextStatus = hasStatus ? status : existing.status;
     const nextImageMode = hasImageMode ? imageMode : (existing.image_mode || "none");
+    const nextCover = hasCover ? cover : existing.selected_cover_image_id;
+    const nextContentImages = hasContentImages ? contentImages : JSON.parse(existing.selected_content_image_ids_json||"[]");
+    const selected = [nextCover,...nextContentImages].filter(Boolean);
+    if(selected.length){const placeholders=selected.map(()=>"?").join(",");const row=await env.DB.prepare(`SELECT COUNT(DISTINCT ai.id) count FROM article_images ai JOIN article_group_items gi ON gi.article_id=ai.article_id WHERE gi.group_id=? AND ai.id IN (${placeholders})`).bind(existing.article_group_id,...selected).first();if(Number(row?.count||0)!==new Set(selected).size)return failure("선택 이미지가 초안의 기사 그룹에 속하지 않습니다.",422);}
+    const contentChanged=hasTitle||hasContent||hasTags||hasBlocks||hasCover||hasContentImages;
     const draft = await env.DB.prepare(`UPDATE drafts SET title = ?, content = ?, tags = ?, tags_json=?, body_blocks_json=?, rendered_content=?, status = ?, image_mode = ?,
-      updated_at = CURRENT_TIMESTAMP WHERE id = ? RETURNING id, article_group_id, title, content,
-      tags,tags_json,body_blocks_json,rendered_content,status, image_mode,validation_status,validation_issues_json, created_at, updated_at`).bind(
-        nextTitle, nextContent, JSON.stringify(nextTags),JSON.stringify(nextTags),JSON.stringify(nextBlocks),nextContent, nextStatus, nextImageMode, id,
+      selected_cover_image_id=?,selected_content_image_ids_json=?,draft_version=draft_version+?,approval_status=CASE WHEN ?=1 THEN 'draft' ELSE approval_status END,approved_at=CASE WHEN ?=1 THEN NULL ELSE approved_at END,approved_draft_version=CASE WHEN ?=1 THEN NULL ELSE approved_draft_version END,
+      updated_at = CURRENT_TIMESTAMP WHERE id = ? RETURNING *`).bind(
+        nextTitle, nextContent, JSON.stringify(nextTags),JSON.stringify(nextTags),JSON.stringify(nextBlocks),nextContent, nextStatus, nextImageMode,nextCover,JSON.stringify(nextContentImages),contentChanged?1:0,contentChanged?1:0,contentChanged?1:0,contentChanged?1:0,id,
       ).first();
+    if (contentChanged) await env.DB.prepare("UPDATE automation_settings SET enabled=0,next_run_at=NULL,updated_at=CURRENT_TIMESTAMP WHERE approved_draft_id=?").bind(id).run();
     return json({ success: true, data: { draft: parseDraft(draft) } });
   } catch (error) {
     console.error("Draft update error", error);
