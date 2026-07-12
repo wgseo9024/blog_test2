@@ -4,6 +4,7 @@
 node_modules/
 publisher-app/.session/
 publisher-app/artifacts/
+publisher-app/tmp/
 publisher-app/screenshots/
 publisher-app/logs/
 publisher-app/.env*

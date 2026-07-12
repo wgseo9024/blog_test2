@@ -1,16 +1,17 @@
 import { chromium } from "playwright";
-import { mkdir, readFile, writeFile, rm } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { dismissExistingDraftPopup, editorSelectors, findEditorAcrossFrames, firstVisible, waitForMainFrame } from "./naver-selectors.js";
-import { hammingDistance, inspectAndProcess, MAX_IMAGE_BYTES, normalizeImageUrl } from "./image-processing.js";
+import { cleanupDraftImages, downloadApprovedImages, expectedSequenceLog, findImageControl, insertImageTextSequence, PublisherStageError, selectCategoryIfPresent, validateDraftAssets, verifyInsertedSentences } from "./publisher-workflow.js";
 
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const profileDir = path.join(appDir, ".session", "naver-profile");
 const artifactDir = path.join(appDir, "artifacts");
 const logDir = path.join(appDir, "logs");
+const tmpRoot = path.join(appDir, "tmp");
 await Promise.all([profileDir, artifactDir, logDir].map((dir) => mkdir(dir, { recursive: true })));
 
 async function loadLocalEnv() {
@@ -58,38 +59,16 @@ const api = async (apiPath, options = {}) => {
   return body.data;
 };
 
-const apiForm = async (apiPath, form) => {
-  const response = await fetch(new URL(apiPath,baseUrl),{method:"POST",headers:{Authorization:`Bearer ${token}`},body:form});
-  const body=await response.json();if(!response.ok||body.success===false)throw new Error(body.error?.message||`API HTTP ${response.status}`);return body.data;
-};
+async function selectCategory(page, frame, dryRun = false) {
+  return selectCategoryIfPresent({ page, frame, categoryName, dryRun, log });
+}
 
-async function prepareImages(draft) {
-  const prepared=[];
-  const urls=new Map(),hashes=new Map(),perceptual=[];
-  for(const image of (draft.images||[]).slice(0,4)) {
-    const normalized=normalizeImageUrl(image.image_url,true);if(urls.has(normalized)){await api(`/api/publisher/images/${image.id}`,{method:"PUT",body:JSON.stringify({duplicate_of:urls.get(normalized),exclude_reason:"normalized_url_duplicate",processing_status:"excluded"})});continue;}urls.set(normalized,image.id);
-    const response=await fetch(image.image_url,{headers:{Accept:"image/jpeg,image/png,image/webp"}});
-    const type=String(response.headers.get("content-type")||"").split(";")[0].toLowerCase();
-    const announced=Number(response.headers.get("content-length")||0);
-    if(!response.ok||!["image/jpeg","image/png","image/webp"].includes(type)||announced>MAX_IMAGE_BYTES)throw new Error(`IMAGE_DOWNLOAD_REJECTED:${image.id}`);
-    const original=Buffer.from(await response.arrayBuffer());
-    const result=await inspectAndProcess(original,{approvedForUse:true});
-    const duplicateId=hashes.get(result.sha256)||perceptual.find((item)=>hammingDistance(item.hash,result.perceptualHash)<=5)?.id;if(duplicateId){await api(`/api/publisher/images/${image.id}`,{method:"PUT",body:JSON.stringify({sha256:result.sha256,perceptual_hash:result.perceptualHash,duplicate_of:duplicateId,exclude_reason:hashes.has(result.sha256)?"sha256_duplicate":"perceptual_hash_duplicate",processing_status:"excluded"})});continue;}hashes.set(result.sha256,image.id);perceptual.push({id:image.id,hash:result.perceptualHash});
-    const form=new FormData();form.set("original",new Blob([original],{type}),`original-${image.id}`);form.set("processed",new Blob([result.processed],{type:"image/jpeg"}),`processed-${image.id}.jpg`);form.set("metadata",JSON.stringify({width:result.width,height:result.height,cropPixels:result.cropPixels,cropPercent:result.cropPercent,sha256:result.sha256,perceptualHash:result.perceptualHash}));
-    await apiForm(`/api/publisher/images/${image.id}`,form);
-    const filePath=path.join(artifactDir,`upload-${draft.id}-${image.id}.jpg`);await writeFile(filePath,result.processed);prepared.push({id:image.id,filePath});
+async function visibleAcross(page, frame, candidates) {
+  for (const scope of [frame, page]) {
+    const found = scope ? await firstVisible(scope, candidates) : null;
+    if (found) return found;
   }
-  return prepared;
-}
-
-async function selectCategory(page) {
-  if(!categoryName)return;
-  const button=(await firstVisible(page,editorSelectors.category))?.locator;if(!button)throw new Error("네이버 카테고리 선택기를 찾지 못했습니다.");
-  await button.click();const option=page.getByText(categoryName,{exact:true}).first();if(!await option.isVisible().catch(()=>false))throw new Error(`설정한 네이버 카테고리를 찾지 못했습니다: ${categoryName}`);await option.click();
-}
-
-async function uploadImages(page,prepared) {
-  for(const image of prepared){const button=(await firstVisible(page,editorSelectors.image))?.locator;if(!button)throw new Error("네이버 이미지 버튼을 찾지 못했습니다.");const chooser=page.waitForEvent("filechooser",{timeout:10000});await button.click();(await chooser).setFiles(image.filePath);await page.waitForTimeout(1500);}
+  return null;
 }
 
 async function queuedDrafts() {
@@ -209,7 +188,17 @@ try {
   if (!drafts.length) { await context.close(); process.exit(0); }
   if (mode === "dry-run") {
     await waitForLogin(page);
-    try { await inspectEditor(page); await log("Dry Run 성공: 입력이나 저장, 발행은 수행하지 않았습니다."); }
+    try {
+      const candidate = drafts[0];
+      validateDraftAssets(candidate);
+      const editor = await inspectEditor(page);
+      const imageControl = await findImageControl(editor.frame);
+      if (!imageControl.input && !imageControl.button) throw new PublisherStageError("dry_run_image_control", "mainFrame에서 이미지 버튼 또는 file input을 찾지 못했습니다.");
+      if (!await visibleAcross(page, editor.frame, editorSelectors.temporarySave)) throw new PublisherStageError("dry_run_save_control", "임시저장 버튼을 찾지 못했습니다.");
+      await selectCategory(page, editor.frame, true);
+      await log(expectedSequenceLog());
+      await log("Dry Run 성공: 다운로드, 업로드, 입력, 임시저장은 수행하지 않았습니다.");
+    }
     catch (error) { await saveFailureArtifacts(page, "dry-run-failed"); throw error; }
     await context.close();
     process.exit(0);
@@ -231,17 +220,22 @@ try {
   const lease = await api("/api/publisher/lease", { method: "POST", body: JSON.stringify({ draft_id: candidate.id }) });
   const draft = lease.draft;
   let resultSent = false;
+  let temporaryDirectory = null;
   try {
     await page.goto("https://blog.naver.com/",{waitUntil:"domcontentloaded",timeout:30000});
     const signals=await loginSignals(page);if(!signals.passed){await api("/api/publisher/result",{method:"POST",body:JSON.stringify({draft_id:draft.id,lease_token:lease.lease_token,result:"login_required",message:"로그인이 만료되었습니다. npm run login-check로 재로그인하세요."})});resultSent=true;throw new Error("LOGIN_REQUIRED: npm run login-check로 직접 재로그인하세요.");}
+    const { bodyBlocks } = validateDraftAssets(draft);
     const editor = await inspectEditor(page);
-    const prepared=await prepareImages(draft);
+    const downloaded = await downloadApprovedImages(draft, { baseUrl, token, tmpRoot });
+    temporaryDirectory = downloaded.directory;
     await replaceFieldValue(editor.title.locator, draft.title);
-    const bodyBlocks = Array.isArray(draft.bodyBlocks) && draft.bodyBlocks.length === 7 ? draft.bodyBlocks : [draft.content];
     await replaceFieldValue(editor.body.locator, "");
-    for(let index=0;index<bodyBlocks.length;index++){if(index<prepared.length)await uploadImages(page,[prepared[index]]);await editor.body.locator.press("End");await editor.body.locator.pressSequentially(`${bodyBlocks[index]}\n\n`);}
+    const inserted = await insertImageTextSequence({ page, frame: editor.frame, bodyLocator: editor.body.locator,
+      files: downloaded.files, bodyBlocks, onUpload: async (index, count) => log(`이미지 ${index + 1} 업로드 성공, 현재 이미지 블록 ${count}개`) });
+    const domSentenceCount = await verifyInsertedSentences(editor.frame, editor.body.locator, bodyBlocks);
+    if (inserted.imageCount !== 4 || domSentenceCount !== 7) throw new PublisherStageError("dom_verification", `입력 검증 실패: 이미지 ${inserted.imageCount}개, 문장 ${domSentenceCount}개`);
     await editor.body.locator.pressSequentially((draft.tags||[]).map((tag)=>`#${tag}`).join(" "));
-    await selectCategory(page);
+    await selectCategory(page, editor.frame);
     await stopWarning(page);
 
     if (mode === "publish") {
@@ -261,8 +255,8 @@ try {
       resultSent = true;
       await log(`초안 #${draft.id} 공개 발행 성공을 기록했습니다.`);
     } else {
-      const saveButton = (await firstVisible(page, editorSelectors.temporarySave))?.locator;
-      if (!await saveButton.isVisible().catch(() => false)) throw new Error("임시저장 버튼을 확인하지 못했습니다.");
+      const saveButton = (await visibleAcross(page, editor.frame, editorSelectors.temporarySave))?.locator;
+      if (!saveButton || !await saveButton.isVisible().catch(() => false)) throw new Error("임시저장 버튼을 확인하지 못했습니다.");
       await saveButton.click({ timeout: 10000 });
       const confirmation = page.getByText(/임시저장.*(완료|저장)|저장되었습니다/i).first();
       const messageVisible = await confirmation.isVisible({ timeout: 10000 }).catch(() => false);
@@ -273,15 +267,17 @@ try {
       resultSent = true;
       await log(`초안 #${draft.id} 임시저장 성공을 기록했습니다. 공개 발행은 하지 않았습니다.`);
       if(!unattended){const rl=createInterface({input,output});await rl.question("브라우저에서 임시저장 글을 확인한 뒤 Enter를 누르세요: ");rl.close();}
-      await Promise.all((prepared||[]).map((image)=>rm(image.filePath,{force:true})));
     }
   } catch (error) {
     await saveFailureArtifacts(page, mode === "publish" ? "publish-failed" : "save-draft-failed");
     if (!resultSent) {
+      const stage = error.stage || "publisher_input";
       await api("/api/publisher/result", { method: "POST", body: JSON.stringify({ draft_id: draft.id,
-        lease_token: lease.lease_token, result: "released", message: String(error.message).slice(0, 500) }) }).catch(() => {});
+        lease_token: lease.lease_token, result: error.result || "retry", message: `${stage}: ${error.message}`.slice(0, 500) }) }).catch(() => {});
     }
     throw error;
+  } finally {
+    await cleanupDraftImages(temporaryDirectory).catch(() => {});
   }
   await context.close();
 } catch (error) {

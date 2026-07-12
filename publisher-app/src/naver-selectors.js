@@ -23,8 +23,8 @@ export const editorSelectors = {
     { kind: "css", value: 'body[contenteditable="true"]' },
   ],
   temporarySave: [{kind:"role",role:"button",name:/임시저장/},{kind:"text",value:/임시저장/}],
-  image: [{kind:"role",role:"button",name:/사진|이미지/},{kind:"text",value:/사진|이미지/}],
-  category: [{kind:"role",role:"button",name:/카테고리/},{kind:"text",value:/카테고리/}],
+  image: [{kind:"css",value:'button[data-name="image"]'},{kind:"css",value:'button[class*="image"]'},{kind:"role",role:"button",name:/사진|이미지/},{kind:"text",value:/사진|이미지/}],
+  category: [{kind:"css",value:'button[class*="category"]'},{kind:"css",value:'[class*="category"] button'},{kind:"role",role:"button",name:/카테고리/},{kind:"text",value:/카테고리/}],
 };
 
 const existingDraftPrompt = /작성 중인 글이 있습니다|이어서 작성하시겠습니까/;

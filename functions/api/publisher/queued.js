@@ -8,10 +8,25 @@ export async function onRequestGet({ request, env }) {
     created_at, updated_at FROM drafts WHERE status = 'queued' AND approval_status='approved' AND approved_draft_version=draft_version
     AND (lease_expires_at IS NULL OR lease_expires_at <= ?) ORDER BY created_at, id LIMIT 30`)
     .bind(new Date().toISOString()).all();
-  return json({ success: true, data: { drafts: (results || []).map((draft) => ({ ...draft,
+  const drafts = results || [];
+  const imagesByGroup = new Map();
+  await Promise.all(drafts.map(async (draft) => {
+    if (imagesByGroup.has(draft.article_group_id)) return;
+    const query = await env.DB.prepare(`SELECT ai.id, ai.content_type, ai.size_bytes, ai.sort_order
+      FROM article_images ai JOIN article_group_items gi ON gi.article_id = ai.article_id
+      WHERE gi.group_id = ? AND ai.approved_for_use = 1 AND ai.rights_status = 'approved'
+        AND ai.processed_r2_key IS NOT NULL
+      ORDER BY ai.sort_order ASC, ai.id ASC LIMIT 4`).bind(draft.article_group_id).all();
+    imagesByGroup.set(draft.article_group_id, (query.results || []).map((image) => ({
+      ...image, download_url: `/api/publisher/images/${image.id}`,
+    })));
+  }));
+  return json({ success: true, data: { drafts: drafts.map((draft) => ({ ...draft,
     tags: (() => { try { return JSON.parse(draft.tags); } catch { return []; } })(),
-    bodyBlocks: (() => { try { return JSON.parse(draft.body_blocks_json||"[]"); } catch { return []; } })(),
-    validationIssues: (() => { try { return JSON.parse(draft.validation_issues_json||"[]"); } catch { return []; } })() })) } });
+    body_blocks: (() => { try { const value = JSON.parse(draft.body_blocks_json || "[]"); return Array.isArray(value) ? value : []; } catch { return []; } })(),
+    validationIssues: (() => { try { return JSON.parse(draft.validation_issues_json||"[]"); } catch { return []; } })(),
+    images: imagesByGroup.get(draft.article_group_id) || [],
+  })) } });
 }
 export function onRequest(context) {
   if (context.request.method !== "GET") return json({ success: false, error: { message: "GET 요청만 허용됩니다." } }, 405);

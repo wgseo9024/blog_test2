@@ -15,13 +15,12 @@ export async function onRequestPost({ request, env }) {
   await env.DB.prepare("INSERT INTO draft_publish_events (draft_id, result, message) VALUES (?, 'leased', ?)")
     .bind(draftId, `lease expires ${expires}`).run();
   try { draft.tags = JSON.parse(draft.tags); } catch { draft.tags = []; }
-  try { draft.bodyBlocks = JSON.parse(draft.body_blocks_json || "[]"); } catch { draft.bodyBlocks = []; }
-  const images = (await env.DB.prepare(`SELECT ai.id,ai.image_url,ai.content_type,ai.width,ai.height,ai.size_bytes,
-    ai.sha256,ai.perceptual_hash,ai.sort_order,ai.original_r2_key,ai.processed_r2_key
+  try { draft.body_blocks = JSON.parse(draft.body_blocks_json || "[]"); if (!Array.isArray(draft.body_blocks)) draft.body_blocks = []; } catch { draft.body_blocks = []; }
+  const images = (await env.DB.prepare(`SELECT ai.id,ai.content_type,ai.size_bytes,ai.sort_order
     FROM article_images ai JOIN article_group_items gi ON gi.article_id=ai.article_id
-    WHERE gi.group_id=? AND ai.approved_for_use=1 AND ai.rights_status='approved'
-    ORDER BY COALESCE(ai.sort_order,999),ai.id LIMIT 4`).bind(draft.article_group_id).all()).results || [];
-  draft.images = images;
+    WHERE gi.group_id=? AND ai.approved_for_use=1 AND ai.rights_status='approved' AND ai.processed_r2_key IS NOT NULL
+    ORDER BY ai.sort_order ASC,ai.id ASC LIMIT 4`).bind(draft.article_group_id).all()).results || [];
+  draft.images = images.map((image) => ({ ...image, download_url: `/api/publisher/images/${image.id}` }));
   return json({ success: true, data: { draft, lease_token: token, lease_expires_at: expires } });
 }
 export function onRequest(context) {
