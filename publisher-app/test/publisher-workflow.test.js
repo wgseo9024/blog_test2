@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   findImageControl, insertImageTextSequence, PublisherStageError, selectCategoryIfPresent,
-  uploadSingleImage, validateDraftAssets,
+  expectedSequenceLog, uploadSingleImage, validateDraftAssets,
 } from "../src/publisher-workflow.js";
 
 const draft = (imageCount = 4, blockCount = 7) => ({
@@ -34,26 +34,31 @@ test("file input이 없으면 file chooser로 업로드한다", async () => {
   assert.equal(clicked, true); assert.equal(selected, true); assert.equal(count, 1);
 });
 
-test("이미지 4장 미만이면 image_pending으로 중단한다", () => {
-  assert.throws(() => validateDraftAssets(draft(3, 7)), (error) => error instanceof PublisherStageError && error.result === "image_pending");
+test("승인 이미지 0장이면 image_pending으로 중단한다", () => {
+  assert.throws(() => validateDraftAssets(draft(0, 7)), (error) => error instanceof PublisherStageError && error.result === "image_pending" && error.message === "승인된 처리 이미지가 없습니다.");
+});
+
+for (const imageCount of [1, 2, 3, 4]) test(`승인 이미지 ${imageCount}장이면 진행한다`, () => {
+  assert.equal(validateDraftAssets(draft(imageCount, 7)).images.length, imageCount);
+});
+
+test("승인 이미지 5장이면 정렬된 앞의 4장만 사용한다", () => {
+  assert.deepEqual(validateDraftAssets(draft(5, 7)).images.map(({ id }) => id), [1, 2, 3, 4]);
 });
 
 test("body_blocks 7개 미만이면 queued 복구 대상으로 중단한다", () => {
   assert.throws(() => validateDraftAssets(draft(4, 6)), (error) => error instanceof PublisherStageError && error.result === "retry");
 });
 
-test("이미지1-문장1부터 이미지4-문장4 후 문장7까지 순서대로 입력한다", async () => {
+for (const imageCount of [1, 2, 3, 4, 5]) test(`이미지 ${imageCount}장 입력 순서를 동적으로 생성한다`, async () => {
   const events = [];
-  const bodyLocator = {
-    click: async () => {}, press: async () => {},
-    pressSequentially: async (text) => events.push(text),
-  };
-  const frame = { locator: () => ({ count: async () => 4 }) };
+  const bodyLocator = { click: async () => {}, press: async () => {}, pressSequentially: async (text) => events.push(text) };
+  const frame = { locator: () => ({ count: async () => Math.min(imageCount, 4) }) };
   await insertImageTextSequence({ page: {}, frame, bodyLocator,
-    files: ["i1", "i2", "i3", "i4"], bodyBlocks: draft().body_blocks,
-    upload: async (_page, _frame, file) => { events.push(file); return Number(file.at(-1)); },
+    files: Array.from({ length: imageCount }, (_, index) => `image${index}`), bodyBlocks: Array.from({ length: 7 }, (_, index) => `block${index}`),
+    upload: async (_page, _frame, file) => { events.push(file); return events.length; },
   });
-  assert.deepEqual(events, ["i1", "문장 1", "i2", "문장 2", "i3", "문장 3", "i4", "문장 4", "문장 5", "문장 6", "문장 7"]);
+  assert.equal(`예상 입력 순서: ${events.join(" → ")}`, expectedSequenceLog(imageCount, 7));
 });
 
 test("카테고리 UI가 없어도 기존 선택을 유지한다", async () => {

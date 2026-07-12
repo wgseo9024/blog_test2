@@ -2,7 +2,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { editorSelectors, firstVisible } from "./naver-selectors.js";
 
-export const REQUIRED_IMAGE_COUNT = 4;
+export const MAX_IMAGE_COUNT = 4;
 export const MIN_BODY_BLOCKS = 7;
 export const MAX_DOWNLOAD_BYTES = 15 * 1024 * 1024;
 export const imageBlockSelector = ".se-component.se-image, .se-image-resource, [data-module=\"image\"]";
@@ -23,10 +23,10 @@ export function validateDraftAssets(draft) {
   if (draft.body_blocks.some((block) => !String(block || "").trim())) {
     throw new PublisherStageError("body_blocks_validation", "본문 문장 블록에 빈 문장이 있습니다.");
   }
-  if (!Array.isArray(draft?.images) || draft.images.length !== REQUIRED_IMAGE_COUNT) {
-    throw new PublisherStageError("image_count_validation", "승인된 처리 이미지가 정확히 4장이 아닙니다.", "image_pending");
+  if (!Array.isArray(draft?.images) || draft.images.length < 1) {
+    throw new PublisherStageError("image_count_validation", "승인된 처리 이미지가 없습니다.", "image_pending");
   }
-  return { bodyBlocks: draft.body_blocks.map((block) => String(block).trim()), images: draft.images };
+  return { bodyBlocks: draft.body_blocks.map((block) => String(block).trim()), images: draft.images.slice(0, MAX_IMAGE_COUNT) };
 }
 
 function extensionFor(contentType) {
@@ -123,25 +123,26 @@ async function typeSentence(frame, bodyLocator, sentence) {
 }
 
 export async function insertImageTextSequence({ page, frame, bodyLocator, files, bodyBlocks, upload = uploadSingleImage, onUpload = async () => {} }) {
-  if (files.length !== REQUIRED_IMAGE_COUNT || bodyBlocks.length < MIN_BODY_BLOCKS) throw new PublisherStageError("sequence_validation", "이미지 4장과 본문 문장 7개 이상이 필요합니다.");
+  const usedFiles = Array.isArray(files) ? files.slice(0, MAX_IMAGE_COUNT) : [];
+  if (usedFiles.length < 1 || bodyBlocks.length < MIN_BODY_BLOCKS) throw new PublisherStageError("sequence_validation", "이미지 1장 이상과 본문 문장 7개 이상이 필요합니다.");
   let sentenceCount = 0;
-  for (let index = 0; index < REQUIRED_IMAGE_COUNT; index++) {
-    const count = await upload(page, frame, files[index]);
+  for (let index = 0; index < usedFiles.length; index++) {
+    const count = await upload(page, frame, usedFiles[index]);
     await onUpload(index, count);
     await typeSentence(frame, bodyLocator, bodyBlocks[index]);
     sentenceCount++;
   }
-  for (let index = REQUIRED_IMAGE_COUNT; index < MIN_BODY_BLOCKS; index++) {
+  for (let index = usedFiles.length; index < bodyBlocks.length; index++) {
     await typeSentence(frame, bodyLocator, bodyBlocks[index]);
     sentenceCount++;
   }
-  return { sentenceCount, imageCount: await imageBlockCount(frame) };
+  return { sentenceCount, imageCount: usedFiles.length, domImageCount: await imageBlockCount(frame) };
 }
 
 export async function verifyInsertedSentences(frame, bodyLocator, bodyBlocks) {
   const container = frame?.locator?.(".se-main-container");
   const actualText = container && await container.count().catch(() => 0) ? await container.first().innerText() : await bodyLocator.innerText();
-  const count = bodyBlocks.slice(0, MIN_BODY_BLOCKS).filter((block) => actualText.includes(String(block).trim())).length;
+  const count = bodyBlocks.filter((block) => actualText.includes(String(block).trim())).length;
   return count;
 }
 
@@ -169,6 +170,10 @@ export async function selectCategoryIfPresent({ page, frame, categoryName, dryRu
   return false;
 }
 
-export function expectedSequenceLog() {
-  return "예상 입력 순서: 이미지1 → 문장1 → 이미지2 → 문장2 → 이미지3 → 문장3 → 이미지4 → 문장4 → 문장5 → 문장6 → 문장7";
+export function expectedSequenceLog(imageCount = MAX_IMAGE_COUNT, bodyBlockCount = MIN_BODY_BLOCKS) {
+  const usedImageCount = Math.min(Math.max(Number(imageCount) || 0, 0), MAX_IMAGE_COUNT);
+  const sequence = [];
+  for (let index = 0; index < usedImageCount; index++) sequence.push(`image${index}`, `block${index}`);
+  for (let index = usedImageCount; index < bodyBlockCount; index++) sequence.push(`block${index}`);
+  return `예상 입력 순서: ${sequence.join(" → ")}`;
 }

@@ -190,13 +190,20 @@ try {
     await waitForLogin(page);
     try {
       const candidate = drafts[0];
-      validateDraftAssets(candidate);
+      const approvedImageCount = Array.isArray(candidate.images) ? candidate.images.length : 0;
+      const usedImageCount = Math.min(approvedImageCount, 4);
+      const bodyBlockCount = Array.isArray(candidate.body_blocks) ? candidate.body_blocks.length : 0;
+      await log(`승인 이미지 수: ${approvedImageCount}`);
+      await log(`실제 사용할 이미지 수: ${usedImageCount}`);
+      await log(`본문 블록 수: ${bodyBlockCount}`);
+      await log(expectedSequenceLog(usedImageCount, bodyBlockCount));
+      const { bodyBlocks, images } = validateDraftAssets(candidate);
+      await log(images.length < 4 ? `승인 이미지 ${images.length}장으로 진행합니다.` : "승인 이미지 중 앞의 4장을 사용합니다.");
       const editor = await inspectEditor(page);
       const imageControl = await findImageControl(editor.frame);
       if (!imageControl.input && !imageControl.button) throw new PublisherStageError("dry_run_image_control", "mainFrame에서 이미지 버튼 또는 file input을 찾지 못했습니다.");
       if (!await visibleAcross(page, editor.frame, editorSelectors.temporarySave)) throw new PublisherStageError("dry_run_save_control", "임시저장 버튼을 찾지 못했습니다.");
       await selectCategory(page, editor.frame, true);
-      await log(expectedSequenceLog());
       await log("Dry Run 성공: 다운로드, 업로드, 입력, 임시저장은 수행하지 않았습니다.");
     }
     catch (error) { await saveFailureArtifacts(page, "dry-run-failed"); throw error; }
@@ -224,7 +231,10 @@ try {
   try {
     await page.goto("https://blog.naver.com/",{waitUntil:"domcontentloaded",timeout:30000});
     const signals=await loginSignals(page);if(!signals.passed){await api("/api/publisher/result",{method:"POST",body:JSON.stringify({draft_id:draft.id,lease_token:lease.lease_token,result:"login_required",message:"로그인이 만료되었습니다. npm run login-check로 재로그인하세요."})});resultSent=true;throw new Error("LOGIN_REQUIRED: npm run login-check로 직접 재로그인하세요.");}
-    const { bodyBlocks } = validateDraftAssets(draft);
+    const { bodyBlocks, images } = validateDraftAssets(draft);
+    await log(`승인 이미지 수: ${draft.images?.length || 0}`);
+    await log(`실제 사용할 이미지 수: ${images.length}`);
+    await log(images.length < 4 ? `승인 이미지 ${images.length}장으로 진행합니다.` : "승인 이미지 중 앞의 4장을 사용합니다.");
     const editor = await inspectEditor(page);
     const downloaded = await downloadApprovedImages(draft, { baseUrl, token, tmpRoot });
     temporaryDirectory = downloaded.directory;
@@ -233,7 +243,7 @@ try {
     const inserted = await insertImageTextSequence({ page, frame: editor.frame, bodyLocator: editor.body.locator,
       files: downloaded.files, bodyBlocks, onUpload: async (index, count) => log(`이미지 ${index + 1} 업로드 성공, 현재 이미지 블록 ${count}개`) });
     const domSentenceCount = await verifyInsertedSentences(editor.frame, editor.body.locator, bodyBlocks);
-    if (inserted.imageCount !== 4 || domSentenceCount !== 7) throw new PublisherStageError("dom_verification", `입력 검증 실패: 이미지 ${inserted.imageCount}개, 문장 ${domSentenceCount}개`);
+    if (inserted.imageCount !== images.length || domSentenceCount !== bodyBlocks.length) throw new PublisherStageError("dom_verification", `입력 검증 실패: 이미지 ${inserted.imageCount}개, 문장 ${domSentenceCount}개`);
     await editor.body.locator.pressSequentially((draft.tags||[]).map((tag)=>`#${tag}`).join(" "));
     await selectCategory(page, editor.frame);
     await stopWarning(page);
