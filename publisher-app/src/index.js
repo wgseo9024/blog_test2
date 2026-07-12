@@ -4,7 +4,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { editorSelectors, firstVisible } from "./naver-selectors.js";
+import { dismissExistingDraftPopup, editorSelectors, firstVisible } from "./naver-selectors.js";
 import { hammingDistance, inspectAndProcess, MAX_IMAGE_BYTES, normalizeImageUrl } from "./image-processing.js";
 
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -134,6 +134,9 @@ async function inspectEditor(page) {
   await page.goto(writeUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
   await page.waitForTimeout(2500);
   await stopWarning(page);
+  const popupHandled = await dismissExistingDraftPopup(page);
+  await log(`기존 작성글 팝업 처리: ${popupHandled}`);
+  if (!popupHandled) throw new Error("기존 작성글 확인 팝업을 닫지 못했습니다.");
   const title = await firstVisible(page, editorSelectors.title);
   const body = await firstVisible(page, editorSelectors.body);
   await log(`제목 필드: ${title ? `성공 (${title.selector})` : "실패"}`);
@@ -245,7 +248,7 @@ try {
     await saveFailureArtifacts(page, mode === "publish" ? "publish-failed" : "save-draft-failed");
     if (!resultSent) {
       await api("/api/publisher/result", { method: "POST", body: JSON.stringify({ draft_id: draft.id,
-        lease_token: lease.lease_token, result: "failed", message: String(error.message).slice(0, 500) }) }).catch(() => {});
+        lease_token: lease.lease_token, result: "released", message: String(error.message).slice(0, 500) }) }).catch(() => {});
     }
     throw error;
   }
