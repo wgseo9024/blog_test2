@@ -20,10 +20,12 @@ const schemas = {
 };
 
 export async function response(env, name, instructions, payload, schema) {
-  const res = await fetch("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: env.OPENAI_MODEL, instructions, input: JSON.stringify(payload), text: { format: { type: "json_schema", name, strict: true, schema } }, max_output_tokens: 3000, store: false }) });
+  const res = await fetch("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: env.OPENAI_MODEL, instructions, input: JSON.stringify(payload), text: { format: { type: "json_schema", name, strict: true, schema } }, reasoning: { effort: "low" }, max_output_tokens: 4000, store: false }) });
   const body = await res.json();
   if (!res.ok) throw Object.assign(new Error("OPENAI_API_ERROR"), { status: res.status, detail: body?.error?.code });
-  return JSON.parse(outputText(body));
+  const text = outputText(body);
+  if (!text) throw new Error(`OPENAI_EMPTY_OUTPUT:${name}:${body?.status || "unknown"}:${body?.incomplete_details?.reason || "unknown"}`);
+  return JSON.parse(text);
 }
 
 export const FACT_PROMPT = "기사 1~3개만 근거로 공통 사실, 단일 출처 사실, 충돌, 제외할 추측을 분리하고 모든 항목에 sourceArticleIds를 붙여라.";
