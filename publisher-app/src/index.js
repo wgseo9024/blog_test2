@@ -5,7 +5,7 @@ import { stdin as input, stdout as output } from "node:process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { dismissExistingDraftPopup, editorSelectors, findEditorAcrossFrames, firstVisible, waitForMainFrame } from "./naver-selectors.js";
-import { cleanupDraftImages, downloadApprovedImages, expectedSequenceLog, findImageControl, insertImageTextSequence, PublisherStageError, selectCategoryIfPresent, textBlockCount, validateDraftAssets, verifyInsertedSentences } from "./publisher-workflow.js";
+import { cleanupDraftImages, downloadApprovedImages, expectedSequenceLog, findImageControl, insertImageTextSequence, inspectInsertionOptions, PublisherStageError, selectCategoryIfPresent, textBlockCount, validateDraftAssets, verifyDomSequence, verifyInsertedSentences } from "./publisher-workflow.js";
 
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const profileDir = path.join(appDir, ".session", "naver-profile");
@@ -216,6 +216,12 @@ try {
       if (!imageControl.input && !imageControl.button) throw new PublisherStageError("dry_run_image_control", "mainFrame에서 이미지 버튼 또는 file input을 찾지 못했습니다.");
       const dryRunTextBlocks = await textBlockCount(editor.frame);
       await log(`이미지 아래 새 텍스트 블록 생성 가능성: ${dryRunTextBlocks > 0 ? "있음" : "편집 가능한 본문 selector 기반 확인"}`);
+      const insertion = await inspectInsertionOptions(editor.frame);
+      await log(`입력 전략: ${insertion.canInsertBeforeBody ? "text-first" : "image-first"}`);
+      await log(`이미지 다음 sibling 후보 수: ${insertion.followingCount}`);
+      await log(`새 문단 버튼 후보 수: ${insertion.buttonCount}`);
+      await log(`캡션 후보 제외 수: ${insertion.captionExcluded}`);
+      await log(`본문 앞 이미지 삽입 가능 여부: ${insertion.canInsertBeforeBody ? "가능" : "확인 불가"}`);
       if (!await visibleAcross(page, editor.frame, editorSelectors.temporarySave)) throw new PublisherStageError("dry_run_save_control", "임시저장 버튼을 찾지 못했습니다.");
       await selectCategory(page, editor.frame, true);
       await log("Dry Run 성공: 다운로드, 업로드, 입력, 임시저장은 수행하지 않았습니다.");
@@ -257,9 +263,12 @@ try {
     const inserted = await insertImageTextSequence({ page, frame: editor.frame, bodyLocator: editor.body.locator,
       files: downloaded.files, bodyBlocks, log, onUpload: async (index, count) => log(`이미지 ${index + 1} 업로드 성공, 현재 이미지 블록 ${count}개`) });
     const domSentenceCount = await verifyInsertedSentences(editor.frame, editor.body.locator, bodyBlocks);
+    const sequence = await verifyDomSequence(editor.frame, bodyBlocks, images.length);
+    await log(`선택한 입력 전략: ${inserted.strategy}`);
+    await log(`최종 DOM 순서: ${sequence.found.join(" → ")}`);
     await log(`최종 확인된 이미지 개수: ${inserted.domImageCount}`);
     await log(`최종 확인된 문장 개수: ${domSentenceCount}`);
-    if (inserted.domImageCount < images.length || domSentenceCount !== bodyBlocks.length) throw new PublisherStageError("dom_verification", `입력 검증 실패: 이미지 ${inserted.domImageCount}개, 문장 ${domSentenceCount}개`);
+    if (inserted.domImageCount < images.length || domSentenceCount !== bodyBlocks.length || !sequence.valid) throw new PublisherStageError("dom_order_verification", `입력 순서 검증 실패: 이미지 ${inserted.domImageCount}개, 문장 ${domSentenceCount}개, 순서 ${sequence.found.join(" → ")}`);
     await editor.body.locator.pressSequentially((draft.tags||[]).map((tag)=>`#${tag}`).join(" "));
     await selectCategory(page, editor.frame);
     await stopWarning(page);

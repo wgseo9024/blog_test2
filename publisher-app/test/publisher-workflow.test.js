@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   ensureTextBlockAfterLastImage, findImageControl, insertImageTextSequence, PublisherStageError, selectCategoryIfPresent,
-  expectedSequenceLog, uploadSingleImage, validateDraftAssets, verifyInsertedSentences,
+  expectedSequenceLog, textBlockCount, uploadSingleImage, validateDraftAssets, verifyDomSequence, verifyInsertedSentences,
 } from "../src/publisher-workflow.js";
 
 const draft = (imageCount = 4, blockCount = 7) => ({
@@ -59,7 +59,7 @@ class FakeLocator {
   async click() {}
   async focus() {}
   async pressSequentially(text) { if (this.reflect) this.frame.texts[this.index] = (this.frame.texts[this.index] || "") + text; }
-  async press(key) { if (this.type === "text" && key === "Enter") this.frame.addText(); }
+  async press(key) { if (this.type === "text" && key === "Enter") this.frame.addText(); if (this.type === "image" && (key === "Delete" || key === "Backspace")) this.frame.images--; }
   async innerText() { return this.frame.texts[this.index] || ""; }
   async textContent() { return this.innerText(); }
 }
@@ -76,22 +76,23 @@ class FakeFrame {
   addText() { this.texts.push(""); return new FakeLocator(this, "text", this.texts.length - 1, { reflect: this.reflect }); }
   locator(selector) {
     if (selector === 'input[type="file"]') return new FakeGroup(() => []);
-    if (selector.includes("se-image-resource")) return new FakeGroup(() => Array.from({ length: this.images }, (_, i) => new FakeLocator(this, "image", i)));
+    if (selector.includes("se-component.se-image") && !selector.includes("se-text-paragraph")) return new FakeGroup(() => Array.from({ length: this.images }, (_, i) => new FakeLocator(this, "image", i)));
     return new FakeGroup(() => this.texts.map((_text, i) => new FakeLocator(this, "text", i, { reflect: this.reflect })));
   }
   page() { return { mouse: { click: async () => {} }, keyboard: { insertText: async () => {} } }; }
 }
 
-test("이미지 업로드 후 새 텍스트 블록을 생성하고 이미지 아래 첫 문장을 입력한다", async () => {
+test("본문 7개를 먼저 입력한 뒤 첫 문장 앞에 이미지 1장을 삽입한다", async () => {
   const frame = new FakeFrame(); frame.addText();
   const events = [];
   const blocks = Array.from({ length: 7 }, (_, index) => `문장 ${index + 1} 테스트 본문`);
   const result = await insertImageTextSequence({ page: frame.page(), frame, bodyLocator: frame.locator("text").first(), files: ["image0"], bodyBlocks: blocks,
     upload: async () => { events.push("image0"); frame.images++; frame.addText(); return 1; }, log: async (message) => events.push(message), textBlockTimeout: 50 });
   assert.equal(result.sentenceCount, 7);
+  assert.equal(result.strategy, "text-first");
   assert.deepEqual(frame.texts.filter(Boolean), blocks);
   assert.equal(await verifyInsertedSentences(frame, frame.locator("text").first(), blocks), 7);
-  assert.match(events.join("\n"), /새 텍스트 블록 생성 성공/);
+  assert.match(events.join("\n"), /선택한 입력 전략: text-first/);
 });
 
 test("이미지 아래 텍스트 블록 생성 실패는 queued 복구용 오류를 낸다", async () => {
@@ -105,6 +106,39 @@ test("문장 입력 후 DOM 반영 실패 시 즉시 중단한다", async () => 
   await assert.rejects(() => insertImageTextSequence({ page: frame.page(), frame, bodyLocator: frame.locator("text").first(), files: ["image0"],
     bodyBlocks: Array.from({ length: 7 }, (_, i) => `문장 ${i + 1}`), upload: async () => { frame.images++; frame.addText(); return 1; }, textBlockTimeout: 20 }),
   /문장 1 입력 반영 실패/);
+});
+
+test("이미지 먼저 넣은 뒤 텍스트 블록 생성 실패 시 text-first로 전환한다", async () => {
+  const frame = new FakeFrame(); frame.addText(); let attempts = 0;
+  const logs = [];
+  const result = await insertImageTextSequence({ page: frame.page(), frame, bodyLocator: frame.locator("text").first(), files: ["image0"], strategy: "image-first",
+    bodyBlocks: Array.from({ length: 7 }, (_, i) => `전환 문장 ${i + 1}`), log: async (line) => logs.push(line), textBlockTimeout: 20,
+    upload: async () => { attempts++; frame.images++; return 1; } });
+  assert.equal(result.strategy, "text-first");
+  assert.equal(attempts, 2);
+  assert.match(logs.join("\n"), /삽입 이미지 원상복구: 성공/);
+  assert.match(logs.join("\n"), /text-first 전략으로 전환/);
+});
+
+test("캡션 contenteditable은 본문 블록 수에서 제외한다", async () => {
+  const caption = {
+    isVisible: async () => true, boundingBox: async () => ({ x: 0, y: 0, width: 300, height: 30 }), isDisabled: async () => false,
+    getAttribute: async (name) => name === "contenteditable" ? "true" : name === "class" ? "se-image-caption" : null,
+    evaluate: async () => true, textContent: async () => "이미지 설명",
+  };
+  const frame = { locator: () => new FakeGroup(() => [caption]) };
+  assert.equal(await textBlockCount(frame), 0);
+});
+
+test("이미지 1개 최종 DOM 순서를 image0 다음 block0~block6으로 검증한다", async () => {
+  const blocks = Array.from({ length: 7 }, (_, i) => `순서 문장 ${i + 1}`);
+  const items = [{ image: true, text: "" }, ...blocks.map((text) => ({ image: false, text }))].map((item) => ({
+    isVisible: async () => true, evaluate: async () => item.image, textContent: async () => item.text,
+  }));
+  const frame = { locator: () => new FakeGroup(() => items) };
+  const result = await verifyDomSequence(frame, blocks, 1);
+  assert.equal(result.valid, true);
+  assert.deepEqual(result.found, ["image0", "block0", "block1", "block2", "block3", "block4", "block5", "block6"]);
 });
 
 for (const imageCount of [1, 2, 3, 4, 5]) test(`이미지 ${imageCount}장 예상 순서를 동적으로 생성한다`, () => {
