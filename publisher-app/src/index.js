@@ -5,7 +5,7 @@ import { stdin as input, stdout as output } from "node:process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { dismissExistingDraftPopup, editorSelectors, findEditorAcrossFrames, firstVisible, waitForMainFrame } from "./naver-selectors.js";
-import { cleanupDraftImages, downloadApprovedImages, expectedSequenceLog, findImageControl, insertImageTextSequence, PublisherStageError, selectCategoryIfPresent, validateDraftAssets, verifyInsertedSentences } from "./publisher-workflow.js";
+import { cleanupDraftImages, downloadApprovedImages, expectedSequenceLog, findImageControl, insertImageTextSequence, PublisherStageError, selectCategoryIfPresent, textBlockCount, validateDraftAssets, verifyInsertedSentences } from "./publisher-workflow.js";
 
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const profileDir = path.join(appDir, ".session", "naver-profile");
@@ -97,7 +97,19 @@ async function sanitizedHtml(scope) {
     const copy = document.documentElement.cloneNode(true);
     copy.querySelectorAll("script,style").forEach((node) => node.remove());
     copy.querySelectorAll("input,textarea").forEach((node) => { node.value = ""; node.removeAttribute("value"); });
-    copy.querySelectorAll('[contenteditable="true"]').forEach((node) => { node.textContent = ""; });
+    copy.querySelectorAll("*").forEach((node) => {
+      for (const attribute of [...node.attributes]) {
+        if (/token|cookie|authorization|session|email|phone|name/i.test(attribute.name)) node.removeAttribute(attribute.name);
+        else if (/^(href|src|action)$/i.test(attribute.name)) {
+          try { const url = new URL(attribute.value, location.origin); url.search = ""; url.hash = ""; node.setAttribute(attribute.name, url.href); }
+          catch { node.removeAttribute(attribute.name); }
+        }
+      }
+    });
+    copy.querySelectorAll('[contenteditable="true"]').forEach((node) => {
+      const text = String(node.textContent || "").trim();
+      node.textContent = text ? `${text.slice(0, 20)}${text.length > 20 ? "…[MASKED]" : ""}` : "";
+    });
     return copy.outerHTML.slice(0, 100000);
   });
 }
@@ -202,6 +214,8 @@ try {
       const editor = await inspectEditor(page);
       const imageControl = await findImageControl(editor.frame);
       if (!imageControl.input && !imageControl.button) throw new PublisherStageError("dry_run_image_control", "mainFrame에서 이미지 버튼 또는 file input을 찾지 못했습니다.");
+      const dryRunTextBlocks = await textBlockCount(editor.frame);
+      await log(`이미지 아래 새 텍스트 블록 생성 가능성: ${dryRunTextBlocks > 0 ? "있음" : "편집 가능한 본문 selector 기반 확인"}`);
       if (!await visibleAcross(page, editor.frame, editorSelectors.temporarySave)) throw new PublisherStageError("dry_run_save_control", "임시저장 버튼을 찾지 못했습니다.");
       await selectCategory(page, editor.frame, true);
       await log("Dry Run 성공: 다운로드, 업로드, 입력, 임시저장은 수행하지 않았습니다.");
@@ -241,9 +255,11 @@ try {
     await replaceFieldValue(editor.title.locator, draft.title);
     await replaceFieldValue(editor.body.locator, "");
     const inserted = await insertImageTextSequence({ page, frame: editor.frame, bodyLocator: editor.body.locator,
-      files: downloaded.files, bodyBlocks, onUpload: async (index, count) => log(`이미지 ${index + 1} 업로드 성공, 현재 이미지 블록 ${count}개`) });
+      files: downloaded.files, bodyBlocks, log, onUpload: async (index, count) => log(`이미지 ${index + 1} 업로드 성공, 현재 이미지 블록 ${count}개`) });
     const domSentenceCount = await verifyInsertedSentences(editor.frame, editor.body.locator, bodyBlocks);
-    if (inserted.imageCount !== images.length || domSentenceCount !== bodyBlocks.length) throw new PublisherStageError("dom_verification", `입력 검증 실패: 이미지 ${inserted.imageCount}개, 문장 ${domSentenceCount}개`);
+    await log(`최종 확인된 이미지 개수: ${inserted.domImageCount}`);
+    await log(`최종 확인된 문장 개수: ${domSentenceCount}`);
+    if (inserted.domImageCount < images.length || domSentenceCount !== bodyBlocks.length) throw new PublisherStageError("dom_verification", `입력 검증 실패: 이미지 ${inserted.domImageCount}개, 문장 ${domSentenceCount}개`);
     await editor.body.locator.pressSequentially((draft.tags||[]).map((tag)=>`#${tag}`).join(" "));
     await selectCategory(page, editor.frame);
     await stopWarning(page);

@@ -6,6 +6,15 @@ export const MAX_IMAGE_COUNT = 4;
 export const MIN_BODY_BLOCKS = 7;
 export const MAX_DOWNLOAD_BYTES = 15 * 1024 * 1024;
 export const imageBlockSelector = ".se-component.se-image, .se-image-resource, [data-module=\"image\"]";
+export const textBlockSelector = [
+  '.se-text-paragraph',
+  '.se-component.se-text',
+  '.se-component-content [contenteditable="true"]',
+  '[contenteditable="true"]',
+  '[role="textbox"]',
+  '[data-placeholder*="본문"]',
+  '[data-placeholder*="내용"]',
+].join(", ");
 
 export class PublisherStageError extends Error {
   constructor(stage, message, result = "retry") {
@@ -78,6 +87,73 @@ export async function imageBlockCount(frame) {
   return frame.locator(imageBlockSelector).count();
 }
 
+async function editableTextCandidates(frame, { belowY = -Infinity, nonEmpty = false } = {}) {
+  const group = frame.locator(textBlockSelector);
+  const candidates = [];
+  const total = await group.count().catch(() => 0);
+  for (let index = 0; index < total; index++) {
+    const locator = group.nth(index);
+    const visible = await locator.isVisible().catch(() => false);
+    const box = visible ? await locator.boundingBox().catch(() => null) : null;
+    const disabled = await locator.isDisabled().catch(() => false);
+    const contenteditable = await locator.getAttribute("contenteditable").catch(() => null);
+    const role = await locator.getAttribute("role").catch(() => null);
+    if (!visible || !box || box.width <= 100 || box.height <= 10 || box.y <= belowY || disabled) continue;
+    if (contenteditable !== "true" && role !== "textbox") continue;
+    const text = String(await locator.textContent().catch(() => "") || "").trim();
+    if (nonEmpty && !text) continue;
+    candidates.push({ locator, box, text, selector: await describeLocator(locator) });
+  }
+  return candidates;
+}
+
+async function describeLocator(locator) {
+  const className = String(await locator.getAttribute("class").catch(() => "") || "").trim().split(/\s+/).filter(Boolean).slice(0, 3).join(".");
+  const role = await locator.getAttribute("role").catch(() => null);
+  const editable = await locator.getAttribute("contenteditable").catch(() => null);
+  return `${className ? `.${className}` : "element"}${role ? `[role=${role}]` : ""}${editable ? `[contenteditable=${editable}]` : ""}`;
+}
+
+export async function textBlockCount(frame) {
+  return (await editableTextCandidates(frame)).length;
+}
+
+export async function ensureTextBlockAfterLastImage(editorFrame, { beforeTextCount = 0, timeout = 10000, log = async () => {} } = {}) {
+  const images = editorFrame.locator(imageBlockSelector);
+  const imageCount = await images.count().catch(() => 0);
+  if (!imageCount) throw new PublisherStageError("text_block_creation", "이미지 후 텍스트 블록 생성 실패: 이미지 블록이 없습니다.");
+  const lastImage = images.nth(imageCount - 1);
+  const imageBox = await lastImage.boundingBox().catch(() => null);
+  if (!imageBox) throw new PublisherStageError("text_block_creation", "이미지 후 텍스트 블록 생성 실패: 마지막 이미지 위치를 확인할 수 없습니다.");
+
+  const deadline = Date.now() + timeout;
+  const findNewBlock = async () => {
+    const candidates = await editableTextCandidates(editorFrame, { belowY: imageBox.y + imageBox.height });
+    const grown = (await textBlockCount(editorFrame)) > beforeTextCount;
+    return grown && candidates.length ? candidates.at(-1) : null;
+  };
+  let candidate = await findNewBlock();
+  if (!candidate) {
+    try {
+      const page = editorFrame.page();
+      await page.mouse.click(imageBox.x + Math.min(imageBox.width / 2, 300), imageBox.y + imageBox.height + 20);
+    } catch { /* keyboard fallback below */ }
+    candidate = await findNewBlock();
+  }
+  if (!candidate) {
+    await lastImage.click().catch(() => {});
+    await lastImage.press("End").catch(() => lastImage.press("ArrowDown").catch(() => {}));
+    await lastImage.press("Enter").catch(() => {});
+  }
+  while (!candidate && Date.now() < deadline) {
+    candidate = await findNewBlock();
+    if (!candidate) await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  await log(`새 텍스트 블록 생성 ${candidate ? "성공" : "실패"}`);
+  if (!candidate) throw new PublisherStageError("text_block_creation", "이미지 후 텍스트 블록 생성 실패");
+  return candidate.locator;
+}
+
 export async function findImageControl(frame) {
   const input = frame.locator('input[type="file"]').first();
   if (await input.count().catch(() => 0)) return { input, button: null };
@@ -102,48 +178,75 @@ export async function uploadSingleImage(page, frame, filePath, { timeout = 20000
   return imageBlockCount(frame);
 }
 
-async function currentTextBlock(frame, fallback) {
-  const paragraphs = frame?.locator?.(".se-text-paragraph");
-  if (paragraphs?.last) {
-    const latest = paragraphs.last();
-    if (await latest.isVisible().catch(() => false)) return latest;
-  }
-  return fallback;
-}
-
-async function typeSentence(frame, bodyLocator, sentence) {
+async function typeSentence(page, target, sentence, sentenceNumber, log) {
   const text = String(sentence || "").trim();
   if (!text) throw new PublisherStageError("body_input", "빈 본문 문장은 입력할 수 없습니다.");
-  const target = await currentTextBlock(frame, bodyLocator);
-  await target.click();
-  await target.press("End");
-  await target.pressSequentially(text);
+  const selector = await describeLocator(target);
+  await log(`문장 ${sentenceNumber} 입력 대상 selector: ${selector}`);
+  try {
+    await target.click();
+    await target.focus();
+    await target.pressSequentially(text, { delay: 5 });
+  } catch {
+    try { await target.click(); await page.keyboard.insertText(text); }
+    catch { await target.press("End"); await page.keyboard.insertText(text); }
+  }
+  const marker = text.slice(0, Math.min(20, text.length));
+  const reflected = String(await target.innerText().catch(() => target.textContent().catch(() => "")) || "").includes(marker);
+  await log(`문장 ${sentenceNumber} 입력 후 반영 확인 ${reflected ? "성공" : "실패"}`);
+  if (!reflected) throw new PublisherStageError("body_input", `문장 ${sentenceNumber} 입력 반영 실패`);
   await target.press("Enter");
   await target.press("Enter");
+  return target;
 }
 
-export async function insertImageTextSequence({ page, frame, bodyLocator, files, bodyBlocks, upload = uploadSingleImage, onUpload = async () => {} }) {
+async function nextTextBlock(frame, previous, timeout = 10000) {
+  const previousBox = await previous.boundingBox().catch(() => null);
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const candidates = await editableTextCandidates(frame, { belowY: previousBox ? previousBox.y : -Infinity });
+    if (candidates.length) return candidates.at(-1).locator;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new PublisherStageError("text_block_creation", "이미지 후 텍스트 블록 생성 실패: 다음 문단을 만들지 못했습니다.");
+}
+
+export async function insertImageTextSequence({ page, frame, bodyLocator, files, bodyBlocks, upload = uploadSingleImage, onUpload = async () => {}, log = async () => {}, textBlockTimeout = 10000 }) {
   const usedFiles = Array.isArray(files) ? files.slice(0, MAX_IMAGE_COUNT) : [];
   if (usedFiles.length < 1 || bodyBlocks.length < MIN_BODY_BLOCKS) throw new PublisherStageError("sequence_validation", "이미지 1장 이상과 본문 문장 7개 이상이 필요합니다.");
   let sentenceCount = 0;
+  let target = bodyLocator;
   for (let index = 0; index < usedFiles.length; index++) {
+    const beforeTextCount = await textBlockCount(frame);
+    await log(`이미지 업로드 전 텍스트 블록 수: ${beforeTextCount}`);
     const count = await upload(page, frame, usedFiles[index]);
     await onUpload(index, count);
-    await typeSentence(frame, bodyLocator, bodyBlocks[index]);
+    const afterTextCount = await textBlockCount(frame);
+    await log(`이미지 업로드 후 텍스트 블록 수: ${afterTextCount}`);
+    target = await ensureTextBlockAfterLastImage(frame, { beforeTextCount, timeout: textBlockTimeout, log });
+    await typeSentence(page, target, bodyBlocks[index], index + 1, log);
     sentenceCount++;
   }
   for (let index = usedFiles.length; index < bodyBlocks.length; index++) {
-    await typeSentence(frame, bodyLocator, bodyBlocks[index]);
+    target = await nextTextBlock(frame, target, textBlockTimeout);
+    await typeSentence(page, target, bodyBlocks[index], index + 1, log);
     sentenceCount++;
   }
   return { sentenceCount, imageCount: usedFiles.length, domImageCount: await imageBlockCount(frame) };
 }
 
 export async function verifyInsertedSentences(frame, bodyLocator, bodyBlocks) {
-  const container = frame?.locator?.(".se-main-container");
-  const actualText = container && await container.count().catch(() => 0) ? await container.first().innerText() : await bodyLocator.innerText();
-  const count = bodyBlocks.filter((block) => actualText.includes(String(block).trim())).length;
-  return count;
+  const nonEmptyCandidates = await editableTextCandidates(frame, { nonEmpty: true });
+  const paragraphTexts = [];
+  for (const selector of [".se-text-paragraph", ".se-component.se-text"]) {
+    const group = frame.locator(selector);
+    for (let index = 0; index < await group.count().catch(() => 0); index++) {
+      const item = group.nth(index);
+      if (await item.isVisible().catch(() => false)) paragraphTexts.push(String(await item.textContent().catch(() => "") || "").trim());
+    }
+  }
+  const allText = [...paragraphTexts, ...nonEmptyCandidates.map(({ text }) => text), String(await bodyLocator.textContent().catch(() => "") || "")].join("\n");
+  return bodyBlocks.filter((block) => allText.includes(String(block).trim().slice(0, 20))).length;
 }
 
 export async function selectCategoryIfPresent({ page, frame, categoryName, dryRun = false, log = async () => {} }) {
