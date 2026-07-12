@@ -4,7 +4,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { dismissExistingDraftPopup, editorSelectors, firstVisible } from "./naver-selectors.js";
+import { dismissExistingDraftPopup, editorSelectors, findEditorAcrossFrames, firstVisible, waitForMainFrame } from "./naver-selectors.js";
 import { hammingDistance, inspectAndProcess, MAX_IMAGE_BYTES, normalizeImageUrl } from "./image-processing.js";
 
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -113,21 +113,26 @@ const stopWarning = async (page) => {
   if (await warning.isVisible().catch(() => false)) throw new Error("캡차, 재로그인, 2단계 인증 또는 비정상 접근 경고가 감지되었습니다.");
 };
 
+async function sanitizedHtml(scope) {
+  return scope.evaluate(() => {
+    const copy = document.documentElement.cloneNode(true);
+    copy.querySelectorAll("script,style").forEach((node) => node.remove());
+    copy.querySelectorAll("input,textarea").forEach((node) => { node.value = ""; node.removeAttribute("value"); });
+    copy.querySelectorAll('[contenteditable="true"]').forEach((node) => { node.textContent = ""; });
+    return copy.outerHTML.slice(0, 100000);
+  });
+}
+
 async function saveFailureArtifacts(page, prefix) {
   const id = stamp();
   const screenshot = path.join(artifactDir, `${prefix}-${id}.png`);
-  const htmlPath = path.join(artifactDir, `${prefix}-${id}.html`);
+  const outerHtmlPath = path.join(artifactDir, `${prefix}-${id}-outer.html`);
+  const mainFrameHtmlPath = path.join(artifactDir, `${prefix}-${id}-mainFrame.html`);
   try { await page.screenshot({ path: screenshot, fullPage: true }); } catch { /* browser may be unavailable */ }
-  try {
-    const html = await page.evaluate(() => {
-      const copy = document.documentElement.cloneNode(true);
-      copy.querySelectorAll("script,style").forEach((node) => node.remove());
-      copy.querySelectorAll("input,textarea").forEach((node) => { node.value = ""; node.removeAttribute("value"); });
-      return copy.outerHTML.slice(0, 100000);
-    });
-    await writeFile(htmlPath, html, "utf8");
-  } catch { /* page may be closed */ }
-  await log(`진단 파일 저장: ${screenshot}, ${htmlPath}`, "error");
+  try { await writeFile(outerHtmlPath, await sanitizedHtml(page), "utf8"); } catch { /* page may be closed */ }
+  const mainFrame = page.frame({ name: "mainFrame" });
+  try { if (mainFrame) await writeFile(mainFrameHtmlPath, await sanitizedHtml(mainFrame), "utf8"); } catch { /* frame may be detached */ }
+  await log(`진단 파일 저장: ${screenshot}, ${outerHtmlPath}${mainFrame ? `, ${mainFrameHtmlPath}` : ""}`, "error");
 }
 
 async function inspectEditor(page) {
@@ -137,12 +142,38 @@ async function inspectEditor(page) {
   const popupHandled = await dismissExistingDraftPopup(page);
   await log(`기존 작성글 팝업 처리: ${popupHandled}`);
   if (!popupHandled) throw new Error("기존 작성글 확인 팝업을 닫지 못했습니다.");
-  const title = await firstVisible(page, editorSelectors.title);
-  const body = await firstVisible(page, editorSelectors.body);
+  const main = await waitForMainFrame(page, 15000);
+  await log(`mainFrame 발견: ${main.found}`);
+  await log(`mainFrame URL 확인: ${main.urlConfirmed}`);
+  const editor = await findEditorAcrossFrames(page, main.frame, async (frame) => {
+    let safeUrl = frame.url;
+    try {
+      const parsed = new URL(frame.url);
+      parsed.search = "";
+      parsed.hash = "";
+      safeUrl = parsed.href;
+    } catch { /* about:blank and malformed URLs contain no useful credentials */ }
+    await log(`프레임: name=${JSON.stringify(frame.name)} url=${JSON.stringify(safeUrl)}`);
+  });
+  const counts = editor.mainResult || editor;
+  await log(`제목 후보 개수: ${counts.titleCount}`);
+  await log(`본문 후보 개수: ${counts.bodyCount}`);
+  const { title, body } = editor;
   await log(`제목 필드: ${title ? `성공 (${title.selector})` : "실패"}`);
   await log(`본문 필드: ${body ? `성공 (${body.selector})` : "실패"}`);
   if (!title || !body) throw new Error("네이버 글쓰기 입력 필드를 안전하게 확인하지 못했습니다.");
-  return { title, body };
+  return { title, body, frame: editor.frame };
+}
+
+async function replaceFieldValue(locator, value) {
+  try { await locator.fill(value); return; } catch { /* contenteditable can reject fill */ }
+  await locator.click();
+  await locator.press("Control+A");
+  await locator.press("Backspace");
+  try { await locator.pressSequentially(value); } catch { await locator.evaluate((element, text) => {
+    element.focus();
+    document.execCommand("insertText", false, text);
+  }, value); }
 }
 
 async function waitForLogin(page) {
@@ -205,9 +236,9 @@ try {
     const signals=await loginSignals(page);if(!signals.passed){await api("/api/publisher/result",{method:"POST",body:JSON.stringify({draft_id:draft.id,lease_token:lease.lease_token,result:"login_required",message:"로그인이 만료되었습니다. npm run login-check로 재로그인하세요."})});resultSent=true;throw new Error("LOGIN_REQUIRED: npm run login-check로 직접 재로그인하세요.");}
     const editor = await inspectEditor(page);
     const prepared=await prepareImages(draft);
-    await editor.title.locator.fill(draft.title);
+    await replaceFieldValue(editor.title.locator, draft.title);
     const bodyBlocks = Array.isArray(draft.bodyBlocks) && draft.bodyBlocks.length === 7 ? draft.bodyBlocks : [draft.content];
-    await editor.body.locator.fill("");
+    await replaceFieldValue(editor.body.locator, "");
     for(let index=0;index<bodyBlocks.length;index++){if(index<prepared.length)await uploadImages(page,[prepared[index]]);await editor.body.locator.press("End");await editor.body.locator.pressSequentially(`${bodyBlocks[index]}\n\n`);}
     await editor.body.locator.pressSequentially((draft.tags||[]).map((tag)=>`#${tag}`).join(" "));
     await selectCategory(page);
