@@ -38,8 +38,11 @@ export async function onRequestGet({ request, env }) {
   }
 
   const where = conditions.length ? ` WHERE ${conditions.join(" AND ")}` : "";
-  const sql = `SELECT id, title, url, source, summary, content, published_at,
-    image_url, status, created_at, updated_at
+  const sql = `SELECT id,title,url,source,summary,content,published_at,image_url,status,created_at,updated_at,
+    source_type,nate_rank,previous_nate_rank,best_nate_rank,rank_change,nate_article_id,
+    normalized_article_url,canonical_url,original_publisher_url,ranking_date,ranking_first_seen_at,
+    ranking_last_seen_at,representative_image_url,generated_thumbnail_url,thumbnail_status,
+    thumbnail_approved,scrape_status,draft_status
     FROM articles${where}
     ORDER BY COALESCE(published_at, created_at) DESC, id DESC
     LIMIT 100`;

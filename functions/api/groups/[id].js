@@ -22,7 +22,9 @@ export async function onRequestGet({ env, params }) {
     if (!group) return failure("이슈 그룹을 찾을 수 없습니다.", 404);
 
     const { results } = await env.DB.prepare(`SELECT a.id, a.title, a.source, a.url,
-      a.summary, a.image_url, a.published_at, i.similarity_score
+      a.summary, a.image_url, a.published_at, a.source_type,a.nate_rank,a.previous_nate_rank,
+      a.best_nate_rank,a.rank_change,a.ranking_date,a.thumbnail_status,a.thumbnail_approved,
+      a.scrape_status,a.draft_status,a.generated_thumbnail_url,i.similarity_score
       FROM article_group_items i
       JOIN articles a ON a.id = i.article_id
       WHERE i.group_id = ?

@@ -69,8 +69,12 @@ export async function downloadApprovedImages(draft, { baseUrl, token, tmpRoot, f
       if (!buffer.length || buffer.length > MAX_DOWNLOAD_BYTES || !hasExpectedSignature(buffer, contentType)) {
         throw new PublisherStageError("image_download", `승인 이미지 ${index + 1}의 형식 또는 크기가 올바르지 않습니다.`);
       }
-      const filePath = path.join(directory, `image-${index + 1}${extension}`);
-      await writeFile(filePath, buffer);
+      const generatedHomeThumbnail = image.source === "AI 홈판";
+      const outputBuffer = generatedHomeThumbnail
+        ? await (await import("sharp")).default(buffer).resize(1080, 1080, { fit: "cover" }).jpeg({ quality: 90 }).toBuffer()
+        : buffer;
+      const filePath = path.join(directory, `image-${index + 1}${generatedHomeThumbnail ? ".jpg" : extension}`);
+      await writeFile(filePath, outputBuffer);
       files.push(filePath);
     }
     return { directory, files };

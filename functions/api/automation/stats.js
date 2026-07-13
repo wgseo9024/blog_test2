@@ -4,7 +4,7 @@ export async function onRequestGet({ env }) {
   try {
     const settings = await ensureSettings(env);
     const { start, end } = seoulDayBounds();
-    const [articles, drafts, publishing, groups, failed, queued, approvalWaiting, lastRun] = await Promise.all([
+    const [articles, drafts, publishing, groups, failed, queued, approvalWaiting, lastRun, lastCollection] = await Promise.all([
       env.DB.prepare("SELECT COUNT(*) AS count FROM articles WHERE created_at >= datetime(?) AND created_at < datetime(?)")
         .bind(start, end).first(),
       env.DB.prepare("SELECT COUNT(*) AS count FROM drafts WHERE created_at >= datetime(?) AND created_at < datetime(?)")
@@ -17,6 +17,8 @@ export async function onRequestGet({ env }) {
       env.DB.prepare("SELECT COUNT(*) AS count FROM drafts WHERE status = 'queued'").first(),
       env.DB.prepare("SELECT COUNT(*) AS count FROM drafts WHERE approval_status!='approved'").first(),
       env.DB.prepare("SELECT status,finished_at,error_message,collected_count,groups_created,drafts_created FROM automation_run_logs ORDER BY started_at DESC,id DESC LIMIT 1").first(),
+      env.DB.prepare(`SELECT ranking_date,ranking_url,checked_count,new_article_count,duplicate_count,failed_count,
+        started_at,completed_at,status,error_message FROM nate_collection_runs ORDER BY started_at DESC LIMIT 1`).first(),
     ]);
     return json({ success: true, data: {
       articles_today: Number(articles?.count || 0),
@@ -29,6 +31,7 @@ export async function onRequestGet({ env }) {
       automation_processed_today: Number(publishing?.count || 0),
       next_run_at: settings.next_run_at,
       last_run: lastRun || null,
+      last_collection: lastCollection || null,
     } });
   } catch (error) {
     console.error("Automation stats error", error);

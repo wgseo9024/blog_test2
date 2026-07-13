@@ -16,7 +16,7 @@ export async function onRequestPost({ request, env }) {
     .bind(draftId, `lease expires ${expires}`).run();
   try { draft.tags = JSON.parse(draft.tags); } catch { draft.tags = []; }
   try { draft.body_blocks = JSON.parse(draft.body_blocks_json || "[]"); if (!Array.isArray(draft.body_blocks)) draft.body_blocks = []; } catch { draft.body_blocks = []; }
-  const images = (await env.DB.prepare(`SELECT ai.id,ai.content_type,ai.size_bytes,ai.sort_order
+  const images = (await env.DB.prepare(`SELECT ai.id,ai.content_type,ai.size_bytes,ai.sort_order,ai.source
     FROM article_images ai JOIN article_group_items gi ON gi.article_id=ai.article_id
     WHERE gi.group_id=? AND ai.approved_for_use=1 AND ai.rights_status='approved' AND ai.processed_r2_key IS NOT NULL
     ORDER BY ai.sort_order ASC,ai.id ASC LIMIT 4`).bind(draft.article_group_id).all()).results || [];

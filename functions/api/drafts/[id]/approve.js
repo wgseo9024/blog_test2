@@ -11,6 +11,12 @@ export async function onRequestPost({ env, params }) {
   if (!draft) return fail("초안을 찾을 수 없습니다.", 404);
   const validation = validateWriterOutput({ bodyBlocks: parse(draft.body_blocks_json), tags: parse(draft.tags_json || draft.tags) });
   if (!validation.valid) return fail("글쓰기 검증을 통과한 초안만 승인할 수 있습니다.", 422);
+  const nate = await env.DB.prepare(`SELECT a.id,a.thumbnail_status,a.thumbnail_approved
+    FROM article_group_items gi JOIN articles a ON a.id=gi.article_id
+    WHERE gi.group_id=? AND a.source_type='nate_entertainment_ranking' LIMIT 1`).bind(draft.article_group_id).first();
+  if (nate && (nate.thumbnail_status !== "completed" || !Boolean(nate.thumbnail_approved))) {
+    return fail("완료된 홈판 이미지를 먼저 승인해야 초안을 승인할 수 있습니다.", 422);
+  }
   const selected = [draft.selected_cover_image_id, ...parse(draft.selected_content_image_ids_json)].filter(Boolean).map(Number);
   if (selected.length) {
     const placeholders = selected.map(() => "?").join(",");
@@ -29,4 +35,3 @@ export async function onRequestPost({ env, params }) {
 export function onRequest(context) {
   return context.request.method === "POST" ? onRequestPost(context) : fail("POST 요청만 허용됩니다.", 405);
 }
-

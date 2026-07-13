@@ -47,9 +47,13 @@ export const ensureSettings = async (env) => {
 export const findCurrentApprovedDraft = async (env, draftId) => {
   const id = Number(draftId);
   if (!Number.isSafeInteger(id) || id < 1) return null;
-  return env.DB.prepare(`SELECT id,draft_version,approved_draft_version,approval_status,approved_at
-    FROM drafts WHERE id=? AND approval_status='approved' AND approved_at IS NOT NULL
-    AND approved_draft_version=draft_version LIMIT 1`).bind(id).first();
+  return env.DB.prepare(`SELECT d.id,d.draft_version,d.approved_draft_version,d.approval_status,d.approved_at
+    FROM drafts d WHERE d.id=? AND d.approval_status='approved' AND d.approved_at IS NOT NULL
+    AND d.approved_draft_version=d.draft_version AND NOT EXISTS (
+      SELECT 1 FROM article_group_items gi JOIN articles a ON a.id=gi.article_id
+      WHERE gi.group_id=d.article_group_id AND a.source_type='nate_entertainment_ranking'
+      AND (a.scrape_status<>'completed' OR a.thumbnail_status<>'completed' OR a.thumbnail_approved<>1 OR a.draft_status<>'completed')
+    ) LIMIT 1`).bind(id).first();
 };
 
 export const isTime = (value) => typeof value === "string"

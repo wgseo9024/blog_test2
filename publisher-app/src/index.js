@@ -258,10 +258,12 @@ try {
     const editor = await inspectEditor(page);
     const downloaded = await downloadApprovedImages(draft, { baseUrl, token, tmpRoot });
     temporaryDirectory = downloaded.directory;
-    await replaceFieldValue(editor.title.locator, draft.title);
+    await replaceFieldValue(editor.title.locator, "");
     await replaceFieldValue(editor.body.locator, "");
     const inserted = await insertImageTextSequence({ page, frame: editor.frame, bodyLocator: editor.body.locator,
-      files: downloaded.files, bodyBlocks, log, onUpload: async (index, count) => log(`이미지 ${index + 1} 업로드 성공, 현재 이미지 블록 ${count}개`) });
+      files: downloaded.files, bodyBlocks, strategy: "image-first", log,
+      onUpload: async (index, count) => log(`이미지 ${index + 1} 업로드 성공, 현재 이미지 블록 ${count}개`) });
+    await replaceFieldValue(editor.title.locator, draft.title);
     const domSentenceCount = await verifyInsertedSentences(editor.frame, editor.body.locator, bodyBlocks);
     const sequence = await verifyDomSequence(editor.frame, bodyBlocks, images.length);
     await log(`선택한 입력 전략: ${inserted.strategy}`);

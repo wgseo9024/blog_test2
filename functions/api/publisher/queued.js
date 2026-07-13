@@ -12,7 +12,7 @@ export async function onRequestGet({ request, env }) {
   const imagesByGroup = new Map();
   await Promise.all(drafts.map(async (draft) => {
     if (imagesByGroup.has(draft.article_group_id)) return;
-    const query = await env.DB.prepare(`SELECT ai.id, ai.content_type, ai.size_bytes, ai.sort_order
+    const query = await env.DB.prepare(`SELECT ai.id, ai.content_type, ai.size_bytes, ai.sort_order,ai.source
       FROM article_images ai JOIN article_group_items gi ON gi.article_id = ai.article_id
       WHERE gi.group_id = ? AND ai.approved_for_use = 1 AND ai.rights_status = 'approved'
         AND ai.processed_r2_key IS NOT NULL

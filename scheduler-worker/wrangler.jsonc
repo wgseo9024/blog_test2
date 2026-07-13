@@ -4,7 +4,7 @@
   "main": "src/index.js",
   "compatibility_date": "2026-07-11",
   "triggers": {
-    "crons": ["*/5 * * * *"]
+    "crons": ["*/30 * * * *"]
   },
   "vars": {
     "PAGES_BASE_URL": "https://blog-test2-k36.pages.dev"

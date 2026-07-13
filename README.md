@@ -1,5 +1,21 @@
 # Cloudflare Pages 블로그 생성기
 
+## 연예뉴스 자동 수집 소스
+
+자동 수집은 스포츠경향·마이데일리·뉴시스·MBN RSS를 호출하지 않고 네이트 연예
+일간 랭킹만 사용합니다. 요청 시점의 `Asia/Seoul` 날짜로 아래 URL을 만들며 관리자
+수동 테스트에서만 `date`를 `YYYYMMDD`로 지정할 수 있습니다.
+
+```text
+https://news.nate.com/rank/interest?sc=ent&p=day&date=YYYYMMDD
+```
+
+1위부터 10위가 모두 추출될 때만 정상 처리합니다. 기사 ID, 정규화 URL, canonical,
+원 언론사 URL, 제목 해시 중 하나가 기존 기사와 같으면 상세·이미지·초안을 다시 만들지
+않고 순위와 이력만 갱신합니다. 신규 기사만 상세 수집, AI 홈판 생성, 기존
+`WRITER_PROMPT` 기반 초안 생성으로 이어집니다. 신규 스키마는
+`migrations/0008_nate_entertainment_ranking.sql`에 있습니다.
+
 정적 화면은 `index.html`, OpenAI 호출은 `functions/api/generate.js`에서 처리합니다.
 브라우저에는 OpenAI API 키가 전달되지 않습니다.
 
@@ -61,6 +77,7 @@ Windows에서 승인된 초안을 5분 간격으로 임시저장 처리하려면
 4. 프로젝트의 **Settings → Variables and Secrets**에서 다음 값을 추가합니다.
    - `OPENAI_API_KEY`: OpenAI API 키. 반드시 **Secret/Encrypt**로 저장합니다.
    - `OPENAI_MODEL`: 사용할 Responses API 모델 이름입니다. 그룹 초안 생성에 필수입니다.
+   - `OPENAI_IMAGE_MODEL`: 홈판 이미지 편집 모델입니다. 생략 시 `gpt-image-2`를 사용합니다.
    - `AUTOMATION_TOKEN`: Scheduler와 동일한 긴 무작위 secret입니다.
    - `PUBLISHER_TOKEN`: 로컬 발행 도우미 전용 secret입니다.
 5. 새 배포를 실행합니다.
