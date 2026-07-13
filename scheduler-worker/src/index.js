@@ -12,11 +12,11 @@ export default {
       let result;
       try { result = await response.json(); } catch { result = null; }
       if (!response.ok || result?.success === false) {
-        throw new Error(result?.error?.message || `Nate collection failed with HTTP ${response.status}`);
+        throw new Error(result?.error?.message || `RSS collection failed with HTTP ${response.status}`);
       }
-      console.log("Nate entertainment ranking collection completed", result?.data);
+      console.log("Entertainment RSS collection completed", result?.data);
     } catch (error) {
-      console.error("Scheduled Nate collection failed", error);
+      console.error("Scheduled RSS collection failed", error);
       try {
         await env.DB.prepare(`INSERT INTO automation_run_logs
           (owner_id,trigger_type,status,started_at,finished_at,error_message)

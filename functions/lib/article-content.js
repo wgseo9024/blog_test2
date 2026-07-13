@@ -4,9 +4,15 @@ const MAX_EXTRACTED_LENGTH = 12000;
 const USER_AGENT = "BlogNewsResearchBot/1.0 (article summary extraction; contact site owner)";
 
 const SITE_CONTAINERS = [
-  { host: "sports.khan.co.kr", patterns: [/class=["'][^"']*(?:art_body|article-body)[^"']*["'][^>]*>([\s\S]*?)<\/div>/i] },
+  { host: "sports.khan.co.kr", patterns: [
+    /id=["']articleBody["'][^>]*>([\s\S]*?)<!--\s*\/\/\s*art_body/i,
+    /class=["'][^"']*(?:art_body|article-body)[^"']*["'][^>]*>([\s\S]*?)<\/div>/i,
+  ] },
   { host: "mydaily.co.kr", patterns: [/class=["'][^"']*(?:article_content|view_con)[^"']*["'][^>]*>([\s\S]*?)<\/div>/i] },
-  { host: "newsis.com", patterns: [/class=["'][^"']*(?:viewer|articleBody)[^"']*["'][^>]*>([\s\S]*?)<\/div>/i] },
+  { host: "newsis.com", patterns: [
+    /itemprop=["']articleBody["'][^>]*>([\s\S]*?)<div\s+class=["']viewerBottom/i,
+    /class=["'][^"']*(?:viewer|articleBody)[^"']*["'][^>]*>([\s\S]*?)<\/div>/i,
+  ] },
   { host: "mbn.co.kr", patterns: [/class=["'][^"']*(?:detail|article)[^"']*["'][^>]*>([\s\S]*?)<\/div>/i] },
 ];
 
@@ -31,13 +37,13 @@ const commonBody = (html) => {
 
 export const extractArticle = async (article) => {
   const fallback = clean(article.summary || article.content).slice(0, MAX_EXTRACTED_LENGTH);
-  if (!/^https?:\/\//i.test(article.url || "")) return { text: fallback, status: "fallback", ogImage: null };
+  if (!/^https?:\/\//i.test(article.url || "")) return { text: fallback, status: "fallback", ogImage: null, imageCandidates: [] };
   const target = new URL(article.url);
   const host = target.hostname.toLowerCase();
   if (host === "localhost" || host === "0.0.0.0" || host === "::1"
     || /^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host)
     || /^169\.254\./.test(host) || /^172\.(?:1[6-9]|2\d|3[01])\./.test(host)) {
-    return { text: fallback, status: "fallback", ogImage: null };
+    return { text: fallback, status: "fallback", ogImage: null, imageCandidates: [] };
   }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -56,10 +62,15 @@ export const extractArticle = async (article) => {
     const rawOgImage = html.match(/<meta\b[^>]*(?:property|name)=["']og:image["'][^>]*content=["']([^"']+)["']/i)?.[1]
       || html.match(/<meta\b[^>]*content=["']([^"']+)["'][^>]*(?:property|name)=["']og:image["']/i)?.[1] || null;
     const ogImage = rawOgImage ? new URL(rawOgImage, target).href : null;
-    return { text: text.length >= 80 ? text : fallback, status: text.length >= 80 ? "extracted" : "fallback", ogImage };
+    const rawImages = [...html.matchAll(/<img\b[^>]*(?:data-src|data-original|src)=["']([^"']+)["'][^>]*>/gi)]
+      .map((match) => match[1]).filter((url) => !/logo|icon|banner|profile|avatar|pixel|advert|\/ad[s\/_-]/i.test(url));
+    const imageCandidates = [...new Set([rawOgImage, ...rawImages].filter(Boolean).map((url) => {
+      try { return new URL(url, target).href; } catch { return null; }
+    }).filter((url) => /^https?:\/\//i.test(url)))].slice(0, 4);
+    return { text: text.length >= 80 ? text : fallback, status: text.length >= 80 ? "extracted" : "fallback", ogImage, imageCandidates };
   } catch (error) {
     console.error("Article extraction failed", article.id, String(error?.message || error));
-    return { text: fallback, status: "fallback", ogImage: null };
+    return { text: fallback, status: "fallback", ogImage: null, imageCandidates: [] };
   } finally { clearTimeout(timer); }
 };
 
@@ -68,10 +79,10 @@ export const extractAndStore = async (env, article) => {
   await env.DB.prepare(`UPDATE articles SET extracted_content = ?, extraction_status = ?,
     extracted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
     .bind(result.text || null, result.status, article.id).run();
-  if (result.ogImage && /^https?:\/\//i.test(result.ogImage)) {
+  for (const imageUrl of result.imageCandidates.slice(0, 4)) {
     await env.DB.prepare(`INSERT OR IGNORE INTO article_images
       (article_id, image_url, source, article_url, candidate_type) VALUES (?, ?, ?, ?, 'og')`)
-      .bind(article.id, result.ogImage.slice(0, 3000), article.source || null, article.url).run();
+      .bind(article.id, imageUrl.slice(0, 3000), article.source || null, article.url).run();
   }
   return result;
 };

@@ -1,0 +1,12 @@
+{
+  "name": "blog-test2",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "collect:once": "node scripts/collect-once.mjs",
+    "lint": "node scripts/check-js.mjs",
+    "typecheck": "node scripts/check-js.mjs",
+    "test": "node --test test/*.test.mjs",
+    "build": "node scripts/check-js.mjs"
+  }
+}

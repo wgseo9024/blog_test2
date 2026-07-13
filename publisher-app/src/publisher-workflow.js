@@ -3,7 +3,7 @@ import path from "node:path";
 import { editorSelectors, firstVisible } from "./naver-selectors.js";
 
 export const MAX_IMAGE_COUNT = 4;
-export const MIN_BODY_BLOCKS = 7;
+export const MIN_BODY_BLOCKS = 6;
 export const MAX_DOWNLOAD_BYTES = 15 * 1024 * 1024;
 export const imageBlockSelector = ".se-component.se-image, [data-module=\"image\"]";
 export const imageResourceSelector = ".se-image-resource, .se-module-image img";
@@ -18,7 +18,7 @@ export const textBlockSelector = [
 ].join(", ");
 
 export class PublisherStageError extends Error {
-  constructor(stage, message, result = "retry") {
+  constructor(stage, message, result = "failed") {
     super(message);
     this.name = "PublisherStageError";
     this.stage = stage;
@@ -27,14 +27,14 @@ export class PublisherStageError extends Error {
 }
 
 export function validateDraftAssets(draft) {
-  if (!Array.isArray(draft?.body_blocks) || draft.body_blocks.length < MIN_BODY_BLOCKS) {
-    throw new PublisherStageError("body_blocks_validation", "body_blocks_json이 없거나 본문 문장 블록이 7개 미만입니다.");
+  if (!Array.isArray(draft?.body_blocks) || draft.body_blocks.length !== MIN_BODY_BLOCKS) {
+    throw new PublisherStageError("body_blocks_validation", "body_blocks_json은 정확히 6개여야 합니다.");
   }
   if (draft.body_blocks.some((block) => !String(block || "").trim())) {
     throw new PublisherStageError("body_blocks_validation", "본문 문장 블록에 빈 문장이 있습니다.");
   }
   if (!Array.isArray(draft?.images) || draft.images.length < 1) {
-    throw new PublisherStageError("image_count_validation", "승인된 처리 이미지가 없습니다.", "image_pending");
+    throw new PublisherStageError("image_count_validation", "승인된 처리 이미지가 없습니다.", "failed");
   }
   return { bodyBlocks: draft.body_blocks.map((block) => String(block).trim()), images: draft.images.slice(0, MAX_IMAGE_COUNT) };
 }

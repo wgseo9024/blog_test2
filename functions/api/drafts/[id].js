@@ -72,7 +72,7 @@ export async function onRequestPut({ request, env, params }) {
     const nextTitle = hasTitle ? title : existing.title;
     const nextTags = hasTags ? tags : parseDraft(existing).tags;
     const nextBlocks = hasBlocks ? blocks : parseDraft(existing).bodyBlocks;
-    if ((hasBlocks || hasTags) && !validateWriterOutput({bodyBlocks:nextBlocks,tags:nextTags}).valid) return failure("bodyBlocks 7개·각 문장 90자 이상·본문 600~800자·중복 없는 태그 10개·# 금지 조건을 확인해 주세요.",422);
+    if ((hasBlocks || hasTags) && !validateWriterOutput({bodyBlocks:nextBlocks,tags:nextTags}).valid) return failure("bodyBlocks 6개·각 문장 90자 이상·본문 700~800자·중복 없는 태그 10개·# 금지 조건을 확인해 주세요.",422);
     const nextContent = (hasBlocks || hasTags) ? renderDraft(nextBlocks,nextTags) : (hasContent ? content : existing.content);
     const nextStatus = hasStatus ? status : existing.status;
     const nextImageMode = hasImageMode ? imageMode : (existing.image_mode || "none");
@@ -81,12 +81,16 @@ export async function onRequestPut({ request, env, params }) {
     const selected = [nextCover,...nextContentImages].filter(Boolean);
     if(selected.length){const placeholders=selected.map(()=>"?").join(",");const row=await env.DB.prepare(`SELECT COUNT(DISTINCT ai.id) count FROM article_images ai JOIN article_group_items gi ON gi.article_id=ai.article_id WHERE gi.group_id=? AND ai.id IN (${placeholders})`).bind(existing.article_group_id,...selected).first();if(Number(row?.count||0)!==new Set(selected).size)return failure("선택 이미지가 초안의 기사 그룹에 속하지 않습니다.",422);}
     const contentChanged=hasTitle||hasContent||hasTags||hasBlocks||hasCover||hasContentImages;
+    if(contentChanged&&await env.DB.prepare("SELECT id FROM publish_jobs WHERE draft_id=? AND status='processing' LIMIT 1").bind(id).first())return failure("로컬 Publisher가 처리 중인 초안은 수정할 수 없습니다.",409);
     const draft = await env.DB.prepare(`UPDATE drafts SET title = ?, content = ?, tags = ?, tags_json=?, body_blocks_json=?, rendered_content=?, status = ?, image_mode = ?,
       selected_cover_image_id=?,selected_content_image_ids_json=?,draft_version=draft_version+?,approval_status=CASE WHEN ?=1 THEN 'draft' ELSE approval_status END,approved_at=CASE WHEN ?=1 THEN NULL ELSE approved_at END,approved_draft_version=CASE WHEN ?=1 THEN NULL ELSE approved_draft_version END,
       updated_at = CURRENT_TIMESTAMP WHERE id = ? RETURNING *`).bind(
         nextTitle, nextContent, JSON.stringify(nextTags),JSON.stringify(nextTags),JSON.stringify(nextBlocks),nextContent, nextStatus, nextImageMode,nextCover,JSON.stringify(nextContentImages),contentChanged?1:0,contentChanged?1:0,contentChanged?1:0,contentChanged?1:0,id,
       ).first();
-    if (contentChanged) await env.DB.prepare("UPDATE automation_settings SET enabled=0,next_run_at=NULL,updated_at=CURRENT_TIMESTAMP WHERE approved_draft_id=?").bind(id).run();
+    if (contentChanged) await env.DB.batch([
+      env.DB.prepare("UPDATE automation_settings SET enabled=0,next_run_at=NULL,updated_at=CURRENT_TIMESTAMP WHERE approved_draft_id=?").bind(id),
+      env.DB.prepare("UPDATE publish_jobs SET status='failed',error_message='새 초안 버전으로 대체됨',updated_at=CURRENT_TIMESTAMP WHERE draft_id=? AND status='queued'").bind(id),
+    ]);
     return json({ success: true, data: { draft: parseDraft(draft) } });
   } catch (error) {
     console.error("Draft update error", error);

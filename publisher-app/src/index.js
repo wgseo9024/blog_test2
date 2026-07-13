@@ -8,11 +8,9 @@ import { dismissExistingDraftPopup, editorSelectors, findEditorAcrossFrames, fir
 import { cleanupDraftImages, downloadApprovedImages, expectedSequenceLog, findImageControl, insertImageTextSequence, inspectInsertionOptions, PublisherStageError, selectCategoryIfPresent, textBlockCount, validateDraftAssets, verifyDomSequence, verifyInsertedSentences } from "./publisher-workflow.js";
 
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const profileDir = path.join(appDir, ".session", "naver-profile");
 const artifactDir = path.join(appDir, "artifacts");
 const logDir = path.join(appDir, "logs");
 const tmpRoot = path.join(appDir, "tmp");
-await Promise.all([profileDir, artifactDir, logDir].map((dir) => mkdir(dir, { recursive: true })));
 
 async function loadLocalEnv() {
   let text;
@@ -30,11 +28,17 @@ async function loadLocalEnv() {
 }
 await loadLocalEnv();
 
+const profileDir = path.resolve(process.env.BROWSER_PROFILE_PATH || path.join(appDir, ".session", "naver-profile"));
+await Promise.all([profileDir, artifactDir, logDir].map((dir) => mkdir(dir, { recursive: true })));
+
 const args = new Set(process.argv.slice(2));
 const mode = args.has("--login-check") ? "login" : args.has("--dry-run") ? "dry-run" : args.has("--publish") ? "publish" : "save-draft";
-const baseUrl = process.env.BLOG_API_BASE_URL || "https://blog-test2-k36.pages.dev";
-const token = process.env.PUBLISHER_TOKEN || "";
-const writeUrl = process.env.NAVER_BLOG_WRITE_URL || "https://blog.naver.com/GoBlogWrite.naver";
+const baseUrl = process.env.CLOUDFLARE_WORKER_API_URL || process.env.BLOG_API_BASE_URL || "https://blog-test2-k36.pages.dev";
+const token = process.env.LOCAL_AGENT_TOKEN || process.env.PUBLISHER_TOKEN || "";
+const blogId = process.env.NAVER_BLOG_ID || "";
+const writeUrl = process.env.NAVER_BLOG_WRITE_URL || (blogId
+  ? `https://blog.naver.com/${encodeURIComponent(blogId)}?Redirect=Write`
+  : "https://blog.naver.com/GoBlogWrite.naver");
 const headless = String(process.env.HEADLESS || "false").toLowerCase() === "true";
 const stamp = () => new Date().toISOString().replace(/[:.]/g, "-");
 const logPath = path.join(logDir, `publisher-${stamp()}.log`);
@@ -49,7 +53,7 @@ async function log(message, level = "info") {
 }
 
 const api = async (apiPath, options = {}) => {
-  if (!token) throw new Error("PUBLISHER_TOKEN이 설정되지 않았습니다. .env 파일에 직접 입력하세요.");
+  if (!token) throw new Error("LOCAL_AGENT_TOKEN이 설정되지 않았습니다. Windows PC의 .env 파일에 직접 입력하세요.");
   const response = await fetch(new URL(apiPath, baseUrl), { ...options, headers: {
     Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...(options.headers || {}),
   } });
@@ -244,7 +248,7 @@ try {
 
   const requestedId = Number([...args].find((arg) => arg.startsWith("--draft="))?.split("=")[1]);
   const candidate = drafts.find((draft) => draft.id === requestedId) || drafts[0];
-  const lease = await api("/api/publisher/lease", { method: "POST", body: JSON.stringify({ draft_id: candidate.id }) });
+  const lease = await api("/api/publisher/lease", { method: "POST", body: JSON.stringify({ draft_id: candidate.id, job_id: candidate.job_id }) });
   const draft = lease.draft;
   let resultSent = false;
   let temporaryDirectory = null;
@@ -300,7 +304,7 @@ try {
       const buttonUsable = await saveButton.isEnabled().catch(() => false);
       if (!messageVisible || !buttonUsable) throw new Error("두 가지 신호로 임시저장 성공을 확인하지 못했습니다.");
       await api("/api/publisher/result", { method: "POST", body: JSON.stringify({ draft_id: draft.id,
-        lease_token: lease.lease_token, result: "released", message: "네이버 임시저장 완료",result_url:page.url() }) });
+        lease_token: lease.lease_token, result: "saved", message: "네이버 임시저장 완료",result_url:page.url() }) });
       resultSent = true;
       await log(`초안 #${draft.id} 임시저장 성공을 기록했습니다. 공개 발행은 하지 않았습니다.`);
       if(!unattended){const rl=createInterface({input,output});await rl.question("브라우저에서 임시저장 글을 확인한 뒤 Enter를 누르세요: ");rl.close();}
@@ -309,8 +313,9 @@ try {
     await saveFailureArtifacts(page, mode === "publish" ? "publish-failed" : "save-draft-failed");
     if (!resultSent) {
       const stage = error.stage || "publisher_input";
+      const retryable = /timeout|timed out|ECONN|ENOTFOUND|network|HTTP 5\d\d/i.test(String(error.message || ""));
       await api("/api/publisher/result", { method: "POST", body: JSON.stringify({ draft_id: draft.id,
-        lease_token: lease.lease_token, result: error.result || "retry", message: `${stage}: ${error.message}`.slice(0, 500) }) }).catch(() => {});
+        lease_token: lease.lease_token, result: error.result || (retryable ? "retry" : "failed"), message: `${stage}: ${error.message}`.slice(0, 500) }) }).catch(() => {});
     }
     throw error;
   } finally {

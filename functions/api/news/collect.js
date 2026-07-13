@@ -6,6 +6,8 @@ import {
 } from "../../lib/nate-entertainment.js";
 import { NATE_SOURCE_TYPE } from "../../lib/nate-selectors.js";
 import { createThumbnailHooks, generateHomeThumbnail } from "../../lib/nate-thumbnail.js";
+import { extractArticle } from "../../lib/article-content.js";
+import { groupNews } from "./group.js";
 
 const SOURCES = [
   { id: "sports-khan", name: "스포츠경향 연예", url: "https://sports.khan.co.kr/rss/entertainment" },
@@ -14,9 +16,7 @@ const SOURCES = [
   { id: "mbn", name: "MBN 연예", url: "https://www.mbn.co.kr/rss/enter/" },
 ];
 
-// Legacy RSS utilities remain available for unrelated/manual compatibility tests, but the
-// entertainment collection endpoint never selects or calls these sources anymore.
-export const DISABLED_LEGACY_RSS_SOURCES = Object.freeze(SOURCES.map((source) => ({ ...source, enabled: false })));
+export const ENTERTAINMENT_RSS_SOURCES = Object.freeze(SOURCES.map((source) => ({ ...source, enabled: true })));
 
 const FEED_LIMIT = 5;
 const REQUEST_TIMEOUT_MS = 10000;
@@ -78,9 +78,9 @@ const atomLink = (entry) => {
 };
 
 const imageCandidate = (record) => {
-  const tags = record.match(/<(?:media:content|media:thumbnail|enclosure)\b[^>]*>/gi) || [];
+  const tags = record.match(/<(?:media:content|media:thumbnail|enclosure|img)\b[^>]*>/gi) || [];
   for (const tag of tags) {
-    const url = attributeValue(tag, "url");
+    const url = attributeValue(tag, "url") || attributeValue(tag, "src") || attributeValue(tag, "data-src");
     const type = attributeValue(tag, "type");
     if (url && (!type || type.startsWith("image/"))) return url.slice(0, 3000);
   }
@@ -164,7 +164,7 @@ const fetchFeed = async (source) => {
       timeout.feedType = "timeout";
       throw timeout;
     }
-    throw Object.assign(error, { newArticleCreated: true });
+    throw error;
   } finally {
     clearTimeout(timer);
   }
@@ -431,7 +431,7 @@ export async function collectNateEntertainment(env, { rankingDate = getKoreaDate
   }
 }
 
-export async function onRequestPost({ request, env }) {
+export async function onRequestNatePost({ request, env }) {
   let body = {};
   try { const text = await request.text(); if (text.trim()) body = JSON.parse(text); }
   catch { return failure("올바른 JSON 요청이 아닙니다.", 400); }
@@ -449,6 +449,181 @@ export async function onRequestPost({ request, env }) {
     console.error("Nate collection failed", error.message);
     return failure(error.publicMessage || "네이트 연예 랭킹뉴스 수집에 실패했습니다.", 502);
   }
+}
+
+const normalizedRssUrl = (raw) => {
+  const url = new URL(raw);
+  for (const key of [...url.searchParams.keys()]) {
+    if (/^utm_|^(ref|source|campaign|fbclid|gclid|mid|sect|list|cate)$/i.test(key)) url.searchParams.delete(key);
+  }
+  url.hash = "";
+  return url.toString();
+};
+
+const insertRssImageCandidates = async (env, article, urls) => {
+  let count = 0;
+  for (const imageUrl of [...new Set(urls.filter((url) => /^https?:\/\//i.test(url || "")))].slice(0, 4)) {
+    const inserted = await env.DB.prepare(`INSERT OR IGNORE INTO article_images
+      (article_id,image_url,source,article_url,candidate_type) VALUES (?,?,?,?,'og') RETURNING id`)
+      .bind(article.id, imageUrl.slice(0, 3000), article.source, article.url).first();
+    if (inserted?.id) count += 1;
+  }
+  return count;
+};
+
+const collectRssSource = async (env, source) => {
+  const result = { id: source.id, name: source.name, url: source.url, fetched: 0, newArticles: 0,
+    duplicates: 0, advertisementExcluded: 0, shortContentExcluded: 0, extractionSuccess: 0,
+    imageCandidates: 0, errors: [] };
+  let feedItems;
+  try {
+    feedItems = parseFeed(await fetchFeed(source), source);
+    result.fetched = feedItems.length;
+  } catch (error) {
+    result.errors.push({ source: source.name, url: source.url, code: error.feedType || error.message || "RSS_FETCH_FAILED" });
+    return result;
+  }
+  await Promise.all(feedItems.map(async (item) => {
+    if (!item.title || !/^https?:\/\//i.test(item.url || "")) {
+      result.errors.push({ source: source.name, url: item.url || source.url, code: "INVALID_ARTICLE_URL" });
+      return;
+    }
+    try {
+      const url = normalizedRssUrl(item.url);
+      if (scoreAdvertisement(item).isAdvertisement) { result.advertisementExcluded += 1; return; }
+      if (await env.DB.prepare("SELECT id FROM articles WHERE url=? LIMIT 1").bind(url).first()) {
+        result.duplicates += 1; return;
+      }
+      const extracted = await extractArticle({ ...item, url });
+      const content = String(extracted.text || "").replace(/\s+/g, " ").trim();
+      if (content.length <= 100) { result.shortContentExcluded += 1; return; }
+      if (extracted.status === "extracted") result.extractionSuccess += 1;
+      else result.errors.push({ source: source.name, url, code: "ARTICLE_BODY_FALLBACK" });
+      const contentHash = await sha256Hex(content);
+      if (await env.DB.prepare("SELECT id FROM articles WHERE content_hash=? LIMIT 1").bind(contentHash).first()) {
+        result.duplicates += 1; return;
+      }
+      const inserted = await env.DB.prepare(`INSERT INTO articles
+        (title,url,source,summary,content,published_at,image_url,status,extracted_content,extraction_status,extracted_at,
+         source_type,content_hash,scrape_status,draft_status,representative_image_url)
+        VALUES (?,?,?,?,?,?,?,'new',?,?,CURRENT_TIMESTAMP,'rss_entertainment',?,'completed','pending',?) RETURNING *`)
+        .bind(item.title, url, source.name, item.summary || null, item.content || null, item.published_at || null,
+          item.image_url || extracted.ogImage || null, content, extracted.status, contentHash,
+          extracted.ogImage || item.image_url || null).first();
+      result.imageCandidates += await insertRssImageCandidates(env, inserted,
+        [extracted.ogImage, ...(extracted.imageCandidates || []), item.image_url]);
+      result.newArticles += 1;
+    } catch (error) {
+      if (/unique/i.test(String(error?.message || ""))) result.duplicates += 1;
+      else result.errors.push({ source: source.name, url: item.url, code: String(error?.message || "ARTICLE_PROCESSING_FAILED").slice(0, 160) });
+    }
+  }));
+  return result;
+};
+
+const generateRssHomeThumbnail = async (env, groupId, draftId) => {
+  const row = await env.DB.prepare(`SELECT a.*,ai.image_url representative_image
+    FROM article_group_items gi JOIN articles a ON a.id=gi.article_id
+    JOIN article_images ai ON ai.article_id=a.id
+    WHERE gi.group_id=? AND ai.image_url LIKE 'http%' ORDER BY ai.id LIMIT 1`).bind(groupId).first();
+  if (!row || !env.IMAGES_BUCKET) throw new Error("RSS_THUMBNAIL_SOURCE_MISSING");
+  const article = { title: row.title, body: row.extracted_content || row.content || row.summary,
+    representativeImageUrl: row.representative_image };
+  const hooks = await createThumbnailHooks(env, article);
+  const generated = await generateHomeThumbnail(env, article, hooks);
+  const key = `private/generated/rss/${row.id}/${crypto.randomUUID()}.jpg`;
+  await env.IMAGES_BUCKET.put(key, generated.bytes, { httpMetadata: { contentType: "image/jpeg" } });
+  const generatedUrl = `/api/articles/${row.id}/thumbnail`;
+  const image = await env.DB.prepare(`INSERT OR IGNORE INTO article_images
+    (article_id,image_url,source,article_url,candidate_type) VALUES (?,?, 'AI 홈판',?,'og') RETURNING id`)
+    .bind(row.id, generatedUrl, row.url).first();
+  if (!image?.id) throw new Error("RSS_THUMBNAIL_IMAGE_SAVE_FAILED");
+  await env.DB.prepare(`UPDATE article_images SET content_type='image/jpeg',width=1024,height=1024,size_bytes=?,
+    rights_status='pending',rights_confirmed=1,approved_for_use=0,sort_order=0,crop_percent=.15,
+    processing_status='processed',processed_r2_key=? WHERE id=?`).bind(generated.bytes.byteLength, key, image.id).run();
+  await env.DB.batch([
+    env.DB.prepare(`UPDATE articles SET generated_thumbnail_url=?,thumbnail_r2_key=?,thumbnail_hooks_json=?,
+      thumbnail_status='completed',updated_at=CURRENT_TIMESTAMP WHERE id=?`).bind(generatedUrl, key, JSON.stringify(hooks), row.id),
+    env.DB.prepare(`UPDATE drafts SET selected_cover_image_id=?,image_mode='generate',status='review',
+      validation_status='review_required',updated_at=CURRENT_TIMESTAMP WHERE id=?`).bind(image.id, draftId),
+  ]);
+  return image.id;
+};
+
+export async function collectRssEntertainment(env, { generateDrafts = true } = {}) {
+  const runId = crypto.randomUUID();
+  const startedAt = new Date().toISOString();
+  const lockName = "rss-entertainment-collection";
+  await env.DB.prepare("DELETE FROM automation_locks WHERE lock_name=? AND expires_at<=?").bind(lockName, startedAt).run();
+  const lock = await env.DB.prepare(`INSERT OR IGNORE INTO automation_locks (lock_name,owner_id,acquired_at,expires_at)
+    VALUES (?,?,?,?)`).bind(lockName, runId, startedAt, new Date(Date.now() + 25 * 60000).toISOString()).run();
+  if (!lock.meta?.changes) return { skipped: true, reason: "RUN_IN_PROGRESS", sources: [] };
+  await env.DB.prepare("INSERT INTO rss_collection_runs (id,started_at,status) VALUES (?,?,'running')")
+    .bind(runId, startedAt).run();
+  const summary = { fetchedCount: 0, newArticleCount: 0, duplicateCount: 0, advertisementExcludedCount: 0,
+    shortContentExcludedCount: 0, extractionSuccessCount: 0, groupCount: 0, draftCount: 0,
+    imageCandidateCount: 0, sources: [], generationErrors: [] };
+  try {
+    summary.sources = await Promise.all(SOURCES.map((source) => collectRssSource(env, source)));
+    for (const source of summary.sources) {
+      summary.fetchedCount += source.fetched; summary.newArticleCount += source.newArticles;
+      summary.duplicateCount += source.duplicates; summary.advertisementExcludedCount += source.advertisementExcluded;
+      summary.shortContentExcludedCount += source.shortContentExcluded;
+      summary.extractionSuccessCount += source.extractionSuccess; summary.imageCandidateCount += source.imageCandidates;
+    }
+    const grouped = await groupNews(env);
+    summary.groupCount = grouped.groupsCreated;
+    const missingDraftGroups = (await env.DB.prepare(`SELECT DISTINCT g.id FROM article_groups g
+      JOIN article_group_items gi ON gi.group_id=g.id JOIN articles a ON a.id=gi.article_id
+      WHERE a.source_type='rss_entertainment' AND NOT EXISTS (SELECT 1 FROM drafts d WHERE d.article_group_id=g.id)
+      ORDER BY g.id DESC LIMIT 20`).all()).results || [];
+    const draftGroupIds = [...new Set([...grouped.createdGroupIds, ...missingDraftGroups.map((row) => row.id)])];
+    if (generateDrafts) await Promise.all(draftGroupIds.map(async (groupId) => {
+      const response = await generateGroupDraft(env, groupId, { status: "review", preventDuplicate: true });
+      const payload = await response.json();
+      if (!response.ok || !payload?.success) {
+        summary.generationErrors.push({ groupId, code: payload?.error?.code || `HTTP_${response.status}`,
+          reason: payload?.error?.message || "초안 생성 실패" });
+        return;
+      }
+      summary.draftCount += 1;
+      await env.DB.prepare(`UPDATE articles SET draft_status='completed',status='review',updated_at=CURRENT_TIMESTAMP
+        WHERE id IN (SELECT article_id FROM article_group_items WHERE group_id=?)`).bind(groupId).run();
+      try { await generateRssHomeThumbnail(env, groupId, payload.data.draft.id); }
+      catch (error) { summary.generationErrors.push({ groupId, code: String(error?.message || "THUMBNAIL_FAILED") }); }
+    }));
+    const failed = summary.sources.some((source) => source.errors.length) || summary.generationErrors.length;
+    await env.DB.prepare(`UPDATE rss_collection_runs SET completed_at=?,status=?,fetched_count=?,new_article_count=?,
+      duplicate_count=?,advertisement_excluded_count=?,short_content_excluded_count=?,extraction_success_count=?,
+      group_count=?,draft_count=?,image_candidate_count=?,details_json=? WHERE id=?`)
+      .bind(new Date().toISOString(), failed ? "partial" : "completed", summary.fetchedCount, summary.newArticleCount,
+        summary.duplicateCount, summary.advertisementExcludedCount, summary.shortContentExcludedCount,
+        summary.extractionSuccessCount, summary.groupCount, summary.draftCount, summary.imageCandidateCount,
+        JSON.stringify({ sources: summary.sources, generationErrors: summary.generationErrors }), runId).run();
+    return { ...summary, runId, skipped: false };
+  } catch (error) {
+    await env.DB.prepare(`UPDATE rss_collection_runs SET completed_at=?,status='failed',details_json=?,error_message=? WHERE id=?`)
+      .bind(new Date().toISOString(), JSON.stringify(summary), String(error?.message || error).slice(0, 1000), runId).run();
+    throw error;
+  } finally {
+    await env.DB.prepare("DELETE FROM automation_locks WHERE lock_name=? AND owner_id=?").bind(lockName, runId).run();
+  }
+}
+
+export async function onRequestPost({ request, env }) {
+  let body = {};
+  try { const text = await request.text(); if (text.trim()) body = JSON.parse(text); }
+  catch { return failure("올바른 JSON 요청이 아닙니다.", 400); }
+  if (body.sources && (!Array.isArray(body.sources) || body.sources.some((value) => !SOURCES.some((source) => [source.id, source.url].includes(value))))) {
+    return failure("등록된 연예 RSS 소스만 사용할 수 있습니다.", 400);
+  }
+  try {
+    const data = await collectRssEntertainment(env, { generateDrafts: body.generateDrafts !== false });
+    return json({ success: true, data: { ...data, checkedCount: data.fetchedCount,
+      failedCount: data.sources.reduce((count, source) => count + source.errors.length, 0) + data.generationErrors.length,
+      rankingDate: "RSS" } });
+  }
+  catch (error) { console.error("RSS collection failed", error); return failure(`RSS 수집에 실패했습니다: ${error.message}`, 502); }
 }
 
 export function onRequest(context) {

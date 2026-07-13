@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { scoreAdvertisement } from "../functions/lib/advertisement.js";
 import { normalizeTags, validateWriterOutput, validateWithOneRevision } from "../functions/lib/draft-validation.js";
 import { validateGeneratedPost } from "../functions/api/generate.js";
-import { collectSource, onRequestPost as collectEntertainment } from "../functions/api/news/collect.js";
+import { collectSource, onRequestPost as collectEntertainment, parseFeed } from "../functions/api/news/collect.js";
 import { buildGroups } from "../functions/api/news/group.js";
 import { articleSignature } from "../functions/lib/fact-cache.js";
 import {
@@ -11,15 +11,15 @@ import {
   parseNateEntertainmentRanking,
 } from "../functions/lib/nate-entertainment.js";
 
-const blocks = Array.from({length:7},(_,i)=>`${i+1}번째 문장은 기사에서 확인된 사실을 중심으로 독자가 맥락을 이해하도록 구체적으로 설명하고 확인되지 않은 반응이나 추측을 배제하며 보도의 핵심을 신중하게 정리합니다.`);
-while(blocks.join("").length<600) blocks[6]+=" 확인된 범위만 전합니다.";
+const blocks = Array.from({length:6},(_,i)=>`${i+1}번째 문장은 기사에서 확인된 사실을 중심으로 독자가 맥락을 이해하도록 구체적으로 설명하고 확인되지 않은 반응이나 추측을 배제하며 보도의 핵심과 배경을 차분하고 정확하게 정리합니다.`);
+while(blocks.join("").length<700) blocks[5]+=" 확인된 범위만 전합니다.";
 if(blocks.join("").length>800) throw new Error("fixture length");
 const validDraft={bodyBlocks:blocks,tags:Array.from({length:10},(_,i)=>`태그${i+1}`)};
 
 test("광고 점수와 사유를 누적해 저장 가능한 결과를 만든다",()=>{const result=scoreAdvertisement({title:"유료 광고 단독 특가",content:"브랜드 제공 제품을 지금 구매하기 할인 판매합니다. https://a.test/1 https://a.test/2 https://a.test/3"});assert.equal(result.isAdvertisement,true);assert.ok(result.score>=60);assert.ok(result.reasons.length>=2);});
 test("단어 하나만으로 광고 판정하지 않는다",()=>assert.equal(scoreAdvertisement({title:"광고 촬영 소식"}).isAdvertisement,false));
-test("bodyBlocks 7개와 600~800자, tags 10개를 검증한다",()=>assert.equal(validateWriterOutput(validDraft).valid,true));
-test("본문 길이 오류를 검출한다",()=>assert.ok(validateWriterOutput({...validDraft,bodyBlocks:Array(7).fill("짧은 문장입니다.")}).issues.some(x=>x.code==="BODY_LENGTH")));
+test("bodyBlocks 6개와 700~800자, tags 10개를 검증한다",()=>assert.equal(validateWriterOutput(validDraft).valid,true));
+test("본문 길이 오류를 검출한다",()=>assert.ok(validateWriterOutput({...validDraft,bodyBlocks:Array(6).fill("짧은 문장입니다.")}).issues.some(x=>x.code==="BODY_LENGTH")));
 test("90자 미만 문장을 검출한다",()=>{const invalid={...validDraft,bodyBlocks:["짧은 문장입니다.",...validDraft.bodyBlocks.slice(1)]};assert.ok(validateWriterOutput(invalid).issues.some(x=>x.code==="BODY_BLOCK_MIN_LENGTH"));});
 test("중복 태그 제거 후 개수 오류를 검출한다",()=>{assert.deepEqual(normalizeTags(["a","a","b"]),["a","b"]);assert.ok(validateWriterOutput({...validDraft,tags:Array(10).fill("중복")}).issues.some(x=>x.code==="TAG_COUNT"));});
 test("태그 #을 금지한다",()=>assert.ok(validateWriterOutput({...validDraft,tags:["#금지",...validDraft.tags.slice(1)]}).issues.some(x=>x.code==="TAG_HASH")));
@@ -27,10 +27,11 @@ test("Validator 실패 후 정확히 한 번 재작성한다",async()=>{let call
 test("두 번째 실패는 review_required로 표시한다",async()=>{const out=await validateWithOneRevision({},async()=>({valid:false,issues:["x"]}),async()=>({}));assert.equal(out.reviewRequired,true);});
 test("수동 생성 본문도 7문장·각 90자 이상·600~800자와 태그 10개를 강제한다",()=>{const tags=Array.from({length:10},(_,i)=>`태그${i}`);const valid=Array(7).fill(`${"가".repeat(89)}.`).join(" ");assert.equal(validateGeneratedPost({content:valid,tags}).valid,true);assert.equal(validateGeneratedPost({content:Array(7).fill(`${"가".repeat(88)}.`).join(" "),tags}).valid,false);assert.equal(validateGeneratedPost({content:Array(6).fill(`${"가".repeat(99)}.`).join(" "),tags}).valid,false);});
 test("RSS 기사를 파싱한 뒤 광고 판정하고 저장한다",async()=>{const originalFetch=globalThis.fetch;globalThis.fetch=async()=>new Response(`<?xml version="1.0"?><rss><channel><item><title>새 연예 기사</title><link>https://example.com/article/1</link><description>기사 요약입니다.</description></item></channel></rss>`);const env={DB:{prepare(sql){return{bind(){return{first:async()=>sql.startsWith("SELECT")?null:{id:1},run:async()=>({success:true})}}}}}};try{const result=await collectSource(env,{name:"테스트 언론사",url:"https://example.com/rss"});assert.equal(result.fetched,1);assert.equal(result.inserted,1);assert.equal(result.failed,0);}finally{globalThis.fetch=originalFetch;}});
+test("RSS description 안의 img도 이미지 후보로 추출한다",()=>{const [item]=parseFeed(`<?xml version="1.0"?><rss><channel><item><title>기사</title><link>https://example.com/1</link><description><![CDATA[<img src="https://img.example.com/a.jpg">본문]]></description></item></channel></rss>`,{name:"언론사"});assert.equal(item.image_url,"https://img.example.com/a.jpg");});
 test("다중 출처 유사 기사는 함께 묶고 토큰 없는 기사를 포함한 나머지는 단일 이슈 그룹으로 보존한다",()=>{const settings={similarity_threshold:.56,token_weight:.5,entity_weight:.35,time_weight:.15,max_time_gap_hours:72};const now="2026-07-11T00:00:00Z";const groups=buildGroups([{id:1,title:"리센느 새 앨범 프리티 걸 공개",source:"A",published_at:now},{id:2,title:"리센느 새 앨범 프리티 걸 공개",source:"B",published_at:now},{id:3,title:"송혜교 새 소속사 이적",source:"A",published_at:now},{id:4,title:"뉴스",source:"B",published_at:now}],settings);assert.equal(groups.length,3);assert.deepEqual(groups.map(group=>group.length).sort(),[1,1,2]);assert.deepEqual(new Set(groups.flatMap(group=>group.map(({article})=>article.id))),new Set([1,2,3,4]));});
 test("기사 사실 분석 캐시 서명은 같은 입력에 재사용되고 본문 변경 시 무효화된다",async()=>{const article={id:1,title:"제목",source:"언론사",content:"본문"};const first=await articleSignature([article]);assert.equal(first,await articleSignature([{...article}]));assert.notEqual(first,await articleSignature([{...article,content:"수정 본문"}]));});
 test("네이트 URL은 한국 날짜를 사용하고 날짜를 고정하지 않는다",()=>{const instant=new Date("2026-07-12T15:05:00Z");assert.equal(getKoreaDateString(instant),"20260713");assert.equal(buildNateEntertainmentRankingUrl(instant),"https://news.nate.com/rank/interest?sc=ent&p=day&date=20260713");});
 test("네이트 기사 URL의 추적 파라미터와 해시만 제거한다",()=>{assert.equal(normalizeNateArticleUrl("https://news.nate.com/view/20260713n12345?mid=n1008&utm_source=x&keep=yes#comments"),"https://news.nate.com/view/20260713n12345?keep=yes");});
 test("랭킹은 명시된 1위부터 10위까지만 추출하고 11위는 제외한다",()=>{const html=Array.from({length:11},(_,index)=>{const rank=index+1;return `<dl class="mduRank rank${rank}"><dt><em>${rank}</em></dt></dl><div class="mlt01"><a href="//news.nate.com/view/20260713n${String(rank).padStart(5,"0")}?mid=n1008"><h2 class="tit">기사 ${rank}</h2></a><span class="medium">언론사 ${rank}</span></div>`}).join("");const items=parseNateEntertainmentRanking(html,"20260713");assert.deepEqual(items.map(item=>item.rank),[1,2,3,4,5,6,7,8,9,10]);assert.equal(items.some(item=>item.rank===11),false);});
 test("1위부터 10위가 모두 없으면 구조 변경 오류를 낸다",()=>assert.throws(()=>parseNateEntertainmentRanking('<dl class="mduRank rank1"><a href="/view/20260713n00001"><h2>기사</h2></a></dl>',"20260713"),/NATE_RANKING_STRUCTURE_CHANGED/));
-test("연예 자동 수집 API는 기존 RSS 소스 요청을 fetch 전에 거부한다",async()=>{let calls=0;const original=globalThis.fetch;globalThis.fetch=async()=>{calls++;throw new Error("호출되면 안 됨")};try{const response=await collectEntertainment({request:new Request("https://internal/api/news/collect",{method:"POST",body:JSON.stringify({sources:["sports-khan"]})}),env:{}});assert.equal(response.status,400);assert.equal(calls,0);}finally{globalThis.fetch=original;}});
+test("연예 자동 수집 API는 등록되지 않은 소스만 fetch 전에 거부한다",async()=>{let calls=0;const original=globalThis.fetch;globalThis.fetch=async()=>{calls++;throw new Error("호출되면 안 됨")};try{const response=await collectEntertainment({request:new Request("https://internal/api/news/collect",{method:"POST",body:JSON.stringify({sources:["unknown"]})}),env:{}});assert.equal(response.status,400);assert.equal(calls,0);}finally{globalThis.fetch=original;}});

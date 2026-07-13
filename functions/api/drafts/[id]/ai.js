@@ -9,7 +9,8 @@ export async function onRequestPost({request,env,params}) {
   if(!["regenerate_title","regenerate_body","revalidate"].includes(body?.action))return fail("지원하지 않는 AI 동작입니다.");
   if(!env.OPENAI_API_KEY||!env.OPENAI_MODEL)return fail("OpenAI 설정을 확인해 주세요.",503);
   const draft=await env.DB.prepare("SELECT * FROM drafts WHERE id=?").bind(id).first();if(!draft)return fail("초안을 찾을 수 없습니다.",404);
-  const articles=(await env.DB.prepare(`SELECT a.id,a.title,a.source,COALESCE(a.extracted_content,a.summary,a.content) content FROM article_group_items gi JOIN articles a ON a.id=gi.article_id WHERE gi.group_id=? AND COALESCE(a.is_advertisement,0)=0 ORDER BY COALESCE(a.published_at,a.created_at) DESC LIMIT 3`).bind(draft.article_group_id).all()).results||[];
+  const allArticles=(await env.DB.prepare(`SELECT a.id,a.title,a.source,COALESCE(a.extracted_content,a.summary,a.content) content FROM article_group_items gi JOIN articles a ON a.id=gi.article_id WHERE gi.group_id=? AND COALESCE(a.is_advertisement,0)=0 ORDER BY COALESCE(a.published_at,a.created_at) DESC`).bind(draft.article_group_id).all()).results||[];
+  const seenSources=new Set();const articles=allArticles.filter(article=>{const key=String(article.source||"").trim().toLowerCase();if(seenSources.has(key))return false;seenSources.add(key);return true;}).slice(0,3);
   if(!articles.length)return fail("검수 근거 기사를 찾을 수 없습니다.",422);
   const {facts,cacheHit}=await factsForGroup(env,draft.article_group_id,articles,"draft_action_facts");
   let current={title:draft.title,bodyBlocks:parse(draft.body_blocks_json),tags:parse(draft.tags_json,draft.tags)};
@@ -31,6 +32,7 @@ export async function onRequestPost({request,env,params}) {
     ai=await response(env,"draft_revalidator_retry",VALIDATOR_PROMPT,{articles,facts,draft:current,localIssues:local.issues},schemas.validator);
     issues=[...local.issues,...(ai.valid?[]:ai.issues)];
   }
+  if(!local.valid)return fail(`재생성 결과가 형식 검증을 통과하지 못했습니다: ${local.issues.map(issue=>issue.code).join(", ")}`,422);
   const validationStatus=issues.length?"review_required":"passed";
   const status=issues.length?"review":draft.status;
   const rendered=renderDraft(local.bodyBlocks,local.tags);

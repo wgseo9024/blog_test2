@@ -4,12 +4,16 @@
   "type": "module",
   "scripts": {
     "start": "npm run save-draft",
+    "login": "node src/index.js --login-check",
     "login-check": "node src/index.js --login-check",
     "dry-run": "node src/index.js --dry-run",
     "save-draft": "node src/index.js --save-draft",
     "watch": "node src/watch.js",
     "publish": "node src/index.js --publish",
     "check": "node --check src/index.js && node --check src/watch.js && node --check src/image-processing.js && node --check src/naver-selectors.js && node --check src/publisher-workflow.js",
+    "lint": "npm run check",
+    "typecheck": "npm run check",
+    "build": "npm run check",
     "test": "node --test test/*.test.js"
   },
   "dependencies": { "playwright": "^1.53.0", "sharp": "^0.34.3" }

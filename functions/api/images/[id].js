@@ -10,8 +10,7 @@ export async function onRequestPut({ request, env, params }) {
   const existing = await env.DB.prepare(`SELECT ai.*,a.source_type,a.generated_thumbnail_url FROM article_images ai
     JOIN articles a ON a.id=ai.article_id WHERE ai.id=?`).bind(id).first();
   if (!existing) return fail("이미지를 찾을 수 없습니다.", 404);
-  const generatedThumbnail = existing.source_type === "nate_entertainment_ranking"
-    && existing.image_url === existing.generated_thumbnail_url;
+  const generatedThumbnail = existing.image_url === existing.generated_thumbnail_url;
   if (action === "approve" && body.rights_confirmed !== true && !generatedThumbnail) return fail("권한 확인 체크와 승인 동작이 모두 필요합니다.", 422);
   if (!new Set(["approve", "reject", "review_required"]).has(action)) return fail("지원하지 않는 이미지 동작입니다.");
   const status = action === "approve" ? "approved" : action === "reject" ? "rejected" : "review_required";

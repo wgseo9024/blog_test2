@@ -223,7 +223,7 @@ const saveGroup = async (env, members) => {
   return { created: true, groupedIds: savedIds };
 };
 
-export async function onRequestPost({ env }) {
+export async function groupNews(env) {
   try {
     const settings = await env.DB.prepare("SELECT * FROM grouping_settings WHERE id = 1").first()
       || { similarity_threshold: 0.56, token_weight: 0.5, entity_weight: 0.35, time_weight: 0.15, max_time_gap_hours: 72 };
@@ -237,29 +237,42 @@ export async function onRequestPost({ env }) {
     const candidates = buildGroups(articles, settings);
     let groupsCreated = 0;
     const groupedIds = new Set();
+    const createdGroupIds = [];
 
     for (const members of candidates) {
       try {
         const result = await saveGroup(env, members);
-        if (result.created) groupsCreated += 1;
+        if (result.created) {
+          groupsCreated += 1;
+          const group = await env.DB.prepare(`SELECT gi.group_id id FROM article_group_items gi
+            WHERE gi.article_id IN (${result.groupedIds.map(() => "?").join(",")})
+            ORDER BY gi.group_id DESC LIMIT 1`).bind(...result.groupedIds).first();
+          if (group?.id) createdGroupIds.push(group.id);
+        }
         result.groupedIds.forEach((id) => groupedIds.add(id));
       } catch (error) {
         console.error("Group save failed", error);
       }
     }
 
-    return json({
-      success: true,
-      data: {
+    return {
         processed: articles.length,
         groupsCreated,
+        createdGroupIds,
         articlesGrouped: groupedIds.size,
         remaining: Math.max(0, articles.length - groupedIds.size),
         similarity_threshold: settings.similarity_threshold,
-      },
-    });
+    };
   } catch (error) {
     console.error("Article grouping error", error);
+    throw error;
+  }
+}
+
+export async function onRequestPost({ env }) {
+  try {
+    return json({ success: true, data: await groupNews(env) });
+  } catch {
     return failure("유사 기사 그룹화 작업을 완료하지 못했습니다.", 500);
   }
 }
